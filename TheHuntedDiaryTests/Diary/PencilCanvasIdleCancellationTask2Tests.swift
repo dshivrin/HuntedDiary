@@ -1,4 +1,8 @@
+import CoreGraphics
+import Foundation
+import PencilKit
 import Testing
+import UIKit
 @testable import TheHuntedDiary
 
 @MainActor
@@ -29,6 +33,44 @@ struct PencilCanvasIdleCancellationTask2Tests {
 
         #expect(firstCommitCount == 0)
         #expect(latestCommitCount == 1)
+    }
+
+    @Test func programmaticClearCancelsPendingIdleCommit() async {
+        let clock = IdleCancellationClock()
+        let committer = PencilCanvasIdleCommitter(
+            delay: .milliseconds(2500),
+            clock: clock
+        )
+        let model = PencilCanvasModel(drawing: Self.makeDrawing())
+        var commitCount = 0
+
+        committer.drawingDidChange {
+            commitCount += 1
+        }
+        await clock.waitForSleepers(count: 1)
+
+        DiaryCanvasView.clear(model, using: committer)
+        await clock.advance(by: .milliseconds(2500))
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        #expect(model.hasDrawing == false)
+        #expect(commitCount == 0)
+    }
+
+    private static func makeDrawing() -> PKDrawing {
+        let point = PKStrokePoint(
+            location: CGPoint(x: 100, y: 100),
+            timeOffset: 0,
+            size: CGSize(width: 8, height: 8),
+            opacity: 1,
+            force: 1,
+            azimuth: 0,
+            altitude: .pi / 2
+        )
+        let path = PKStrokePath(controlPoints: [point], creationDate: Date(timeIntervalSince1970: 0))
+        return PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
     }
 }
 
