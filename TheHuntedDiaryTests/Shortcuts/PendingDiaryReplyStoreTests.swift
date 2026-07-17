@@ -51,6 +51,47 @@ struct PendingDiaryReplyStoreTests {
         #expect(try FileManager.default.contentsOfDirectory(at: fixture.directoryURL, includingPropertiesForKeys: nil).count == 1)
     }
 
+    @Test func rejectsANewerRecordSchemaWithoutQuarantiningIt() async throws {
+        let fixture = try StoreFixture()
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(makeRequest())
+        try mutateStoredJSON(at: fixture.storeURL) { _, record in
+            record["schemaVersion"] = 999
+        }
+
+        #expect(throws: PendingDiaryReplyStore.StoreError.unsupportedRequestSchemaVersion(999)) {
+            _ = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.storeURL.path))
+        #expect(try FileManager.default.contentsOfDirectory(at: fixture.directoryURL, includingPropertiesForKeys: nil).count == 1)
+    }
+
+    @Test(arguments: ["negative-store", "negative-record", "digest", "date", "attempt", "reply-state"])
+    func quarantinesSyntacticallyValidSemanticCorruption(_ variant: String) async throws {
+        let fixture = try StoreFixture()
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(makeRequest())
+        try mutateStoredJSON(at: fixture.storeURL) { document, record in
+            switch variant {
+            case "negative-store": document["schemaVersion"] = -1
+            case "negative-record": record["schemaVersion"] = -1
+            case "digest": record["capabilityDigest"] = ""
+            case "date": record["expiresAt"] = record["createdAt"]
+            case "attempt": record["attemptCount"] = -1
+            case "reply-state":
+                record["state"] = DiaryReplyRequestState.replyStored.rawValue
+                record.removeValue(forKey: "assistantText")
+            default: Issue.record("Unknown corruption variant")
+            }
+        }
+
+        let recovered = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        #expect(try await recovered.load(id: makeRequest().id) == nil)
+        let files = try FileManager.default.contentsOfDirectory(at: fixture.directoryURL, includingPropertiesForKeys: nil)
+        #expect(files.contains { $0.lastPathComponent.hasPrefix("PendingDiaryReplies.corrupt-") })
+        #expect(!FileManager.default.fileExists(atPath: fixture.storeURL.path))
+    }
+
     @Test func migratesVersionZeroDocumentsAndRecordsOnTheNextDurableTransition() async throws {
         let fixture = try StoreFixture()
         let request = makeRequest()
@@ -106,6 +147,31 @@ struct PendingDiaryReplyStoreTests {
         #expect(try await store.load(id: request.id)?.state == .expired)
         let reloaded = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
         #expect(try await reloaded.load(id: request.id)?.state == .expired)
+    }
+
+    @Test func replyStoredBeforeExpiryRemainsReconcilableAndCommittableAfterExpiry() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest(expiresAt: now.addingTimeInterval(1))
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+        _ = try await store.prompt(id: request.id, capability: requestCapability, now: now)
+        try await store.storeReply(id: request.id, capability: requestCapability, text: "arrived in time", now: now.addingTimeInterval(0.5))
+
+        #expect(try await store.reconcilableRequests(now: now.addingTimeInterval(2)).map(\.id) == [request.id])
+        try await store.markHistoryCommitted(id: request.id, now: now.addingTimeInterval(2))
+        #expect(try await store.load(id: request.id)?.state == .historyCommitted)
+    }
+
+    @Test func completedSetupProbeRemainsProcessableAfterCapabilityExpiry() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest(kind: .setupProbe, expiresAt: now.addingTimeInterval(1))
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+        _ = try await store.prompt(id: request.id, capability: requestCapability, now: now)
+        try await store.storeReply(id: request.id, capability: requestCapability, text: "probe-ok", now: now.addingTimeInterval(0.5))
+        try await store.storeReply(id: request.id, capability: requestCapability, text: "probe-ok", now: now.addingTimeInterval(2))
+
+        #expect(try await store.load(id: request.id)?.state == .replyStored)
     }
 
     @Test func rejectsWrongRequestAndCallbackCapabilities() async throws {
@@ -200,17 +266,41 @@ struct PendingDiaryReplyStoreTests {
     }
 
     @Test(arguments: [
-        DiaryReplyRequestState.readyToLaunch,
-        .awaitingShortcut,
-        .cancelled,
-        .failed,
+        "",
+        "unknown_code",
+        "shortcut_error\nprivate diary text",
+        "private diary text",
+        String(repeating: "x", count: 65),
     ])
+    func rejectsArbitraryFailureCodesWithoutPersistingThem(_ code: String) async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest()
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+
+        await expectStoreError(.invalidFailureCode(request.prefix)) {
+            try await store.markFailed(
+                id: request.id,
+                capability: callbackCapability,
+                code: code,
+                now: now.addingTimeInterval(1)
+            )
+        }
+
+        #expect(try await store.load(id: request.id) == request)
+        if !code.isEmpty {
+            let storedText = try #require(String(data: Data(contentsOf: fixture.storeURL), encoding: .utf8))
+            #expect(!storedText.contains(code))
+        }
+    }
+
+    @Test(arguments: [DiaryReplyRequestState.cancelled, .failed])
     func retryPreservesIdentityAndContentWhileRotatingCapabilities(_ state: DiaryReplyRequestState) async throws {
         let fixture = try StoreFixture()
         var request = makeRequest(state: state, attemptCount: 2)
         request.assistantText = "retained assistant"
         request.historyCommittedAt = Date(timeIntervalSince1970: 42)
-        request.terminalReasonCode = "retryable"
+        request.terminalReasonCode = state == .failed ? "shortcut_error" : "shortcut_cancelled"
         let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
         try await store.create(request)
         let newRequestDigest = digest(newRequestCapability)
@@ -240,6 +330,100 @@ struct PendingDiaryReplyStoreTests {
             _ = try await store.prompt(id: request.id, capability: requestCapability, now: now.addingTimeInterval(11))
         }
         #expect(try await store.prompt(id: request.id, capability: newRequestCapability, now: now.addingTimeInterval(11)) == request.prompt)
+    }
+
+    @Test(arguments: [DiaryReplyRequestState.readyToLaunch, .awaitingShortcut])
+    func activeRetryPreparationIgnoresACompetingCapabilityPair(_ state: DiaryReplyRequestState) async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest(state: state, attemptCount: 3)
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+
+        let prepared = try await store.prepareRetry(
+            id: request.id,
+            capabilityDigest: digest(newRequestCapability),
+            callbackCapabilityDigest: digest(newCallbackCapability),
+            now: now.addingTimeInterval(1)
+        )
+
+        #expect(prepared == request)
+    }
+
+    @Test func terminalRetryRejectsExactAndPartialCapabilityReuse() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest(state: .cancelled)
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+
+        for pair in [
+            (request.capabilityDigest, request.callbackCapabilityDigest),
+            (request.capabilityDigest, digest(newCallbackCapability)),
+            (digest(newRequestCapability), request.callbackCapabilityDigest),
+        ] {
+            await expectStoreError(.retryCapabilityReuse(request.prefix)) {
+                _ = try await store.prepareRetry(
+                    id: request.id,
+                    capabilityDigest: pair.0,
+                    callbackCapabilityDigest: pair.1,
+                    now: now.addingTimeInterval(1)
+                )
+            }
+        }
+        #expect(try await store.load(id: request.id) == request)
+    }
+
+    @Test func concurrentDistinctRetryPairsPrepareExactlyOneAttempt() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest(state: .cancelled, attemptCount: 1)
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+        let otherRequestCapability = Data(repeating: 0x55, count: 32)
+        let otherCallbackCapability = Data(repeating: 0x66, count: 32)
+
+        async let first = store.prepareRetry(
+            id: request.id,
+            capabilityDigest: digest(newRequestCapability),
+            callbackCapabilityDigest: digest(newCallbackCapability),
+            now: now.addingTimeInterval(1)
+        )
+        async let second = store.prepareRetry(
+            id: request.id,
+            capabilityDigest: digest(otherRequestCapability),
+            callbackCapabilityDigest: digest(otherCallbackCapability),
+            now: now.addingTimeInterval(1)
+        )
+        let prepared = try await [first, second]
+
+        #expect(prepared[0] == prepared[1])
+        #expect(prepared[0].attemptCount == 2)
+        await expectStoreError(.invalidCapability(request.prefix)) {
+            _ = try await store.prompt(id: request.id, capability: requestCapability, now: now.addingTimeInterval(2))
+        }
+        await expectStoreError(.invalidCapability(request.prefix)) {
+            try await store.markCancelled(id: request.id, capability: callbackCapability, now: now.addingTimeInterval(2))
+        }
+
+        let winningRequest = prepared[0].capabilityDigest == digest(newRequestCapability) ? newRequestCapability : otherRequestCapability
+        let winningCallback = prepared[0].callbackCapabilityDigest == digest(newCallbackCapability) ? newCallbackCapability : otherCallbackCapability
+        _ = try await store.prompt(id: request.id, capability: winningRequest, now: now.addingTimeInterval(2))
+        try await store.markCancelled(id: request.id, capability: winningCallback, now: now.addingTimeInterval(2))
+    }
+
+    @Test func nonretryableFailureCannotBePreparedForRetry() async throws {
+        let fixture = try StoreFixture()
+        var request = makeRequest(state: .failed)
+        request.terminalReasonCode = DiaryReplyFailureCode.unsupportedDevice.rawValue
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await store.create(request)
+
+        await expectStoreError(.failureNotRetryable(request.prefix)) {
+            _ = try await store.prepareRetry(
+                id: request.id,
+                capabilityDigest: digest(newRequestCapability),
+                callbackCapabilityDigest: digest(newCallbackCapability),
+                now: now.addingTimeInterval(1)
+            )
+        }
     }
 
     @Test func rapidRetryPreparationWithTheSameAttemptIsIdempotent() async throws {
@@ -403,6 +587,52 @@ struct PendingDiaryReplyStoreTests {
         #expect(try await PendingDiaryReplyStore(fileURL: fixture.storeURL).load(id: request.id) == request)
     }
 
+    @Test func cancellationAfterEncodingButBeforeIOLeavesMemoryAndDiskUnchanged() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest()
+        let gate = PersistenceGate()
+        let probe = PersistenceCallProbe()
+        let persistence = PendingDiaryReplyPersistence(
+            beforeWrite: { await gate.beginAndWait() },
+            write: { _, _ in await probe.called() }
+        )
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL, persistence: persistence)
+        let task = Task { try await store.create(request) }
+        await gate.waitUntilStarted()
+
+        task.cancel()
+        await gate.release()
+        do {
+            try await task.value
+            Issue.record("Expected cancellation before persistence I/O")
+        } catch is CancellationError {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(await probe.callCount == 0)
+        #expect(try await store.load(id: request.id) == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.storeURL.path))
+    }
+
+    @Test func directorySyncFailureAfterReplacementReportsCommittedState() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest()
+        let persistence = PendingDiaryReplyPersistence { data, url in
+            try data.write(to: url)
+            throw PendingDiaryReplyPersistenceError.replacementCommittedButDirectorySyncFailed
+        }
+        let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL, persistence: persistence)
+
+        await expectStoreError(.directorySyncFailedAfterCommit) {
+            try await store.create(request)
+        }
+
+        #expect(try await store.load(id: request.id) == request)
+        let reloaded = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        #expect(try await reloaded.load(id: request.id) == request)
+    }
+
     @Test func flushWaitsForAnInFlightCommitAndNoOpsAfterward() async throws {
         let fixture = try StoreFixture()
         let request = makeRequest()
@@ -496,7 +726,14 @@ struct PendingDiaryReplyStoreTests {
             lastLaunchAt: createdAt,
             assistantText: assistantText,
             historyCommittedAt: historyCommittedAt,
-            terminalReasonCode: nil
+            terminalReasonCode: {
+                switch state {
+                case .cancelled: return "shortcut_cancelled"
+                case .failed: return DiaryReplyFailureCode.shortcutError.rawValue
+                case .expired: return "expired"
+                default: return nil
+                }
+            }()
         )
     }
 }
@@ -509,6 +746,19 @@ private let wrongCapability = Data(repeating: 0xFF, count: 32)
 
 private func digest(_ capability: Data) -> Data {
     try! DiaryReplyCapability(requestID: UUID(), capability: capability).capabilityDigest
+}
+
+private func mutateStoredJSON(
+    at url: URL,
+    mutation: (inout [String: Any], inout [String: Any]) -> Void
+) throws {
+    var document = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    var records = try #require(document["records"] as? [[String: Any]])
+    var record = try #require(records.first)
+    mutation(&document, &record)
+    records[0] = record
+    document["records"] = records
+    try JSONSerialization.data(withJSONObject: document).write(to: url)
 }
 
 private extension PendingDiaryReply {

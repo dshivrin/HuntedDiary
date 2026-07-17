@@ -3,15 +3,29 @@ import Darwin
 import Foundation
 
 nonisolated struct PendingDiaryReplyPersistence: Sendable {
+    let beforeWrite: @Sendable () async throws -> Void
     let write: @Sendable (Data, URL) async throws -> Void
 
     init(write: @escaping @Sendable (Data, URL) async throws -> Void) {
+        self.beforeWrite = {}
+        self.write = write
+    }
+
+    init(
+        beforeWrite: @escaping @Sendable () async throws -> Void,
+        write: @escaping @Sendable (Data, URL) async throws -> Void
+    ) {
+        self.beforeWrite = beforeWrite
         self.write = write
     }
 
     static let live = Self { data, destinationURL in
         try AtomicPendingReplyWriter.write(data, to: destinationURL)
     }
+}
+
+nonisolated enum PendingDiaryReplyPersistenceError: Error {
+    case replacementCommittedButDirectorySyncFailed
 }
 
 actor PendingDiaryReplyStore: Sendable {
@@ -53,15 +67,7 @@ actor PendingDiaryReplyStore: Sendable {
 
     func create(_ request: PendingDiaryReply) async throws {
         try await mutate { candidate in
-            guard request.schemaVersion == PendingDiaryReply.currentSchemaVersion else {
-                throw StoreError.unsupportedRequestSchemaVersion(request.schemaVersion)
-            }
-            guard request.capabilityDigest.count == SHA256.byteCount,
-                  request.callbackCapabilityDigest.count == SHA256.byteCount,
-                  request.expiresAt > request.createdAt,
-                  request.attemptCount >= 0 else {
-                throw StoreError.invalidRequest(requestPrefix(request.id))
-            }
+            try Self.validateRequest(request, requireCurrentSchema: true)
             guard candidate[request.id] == nil else {
                 throw StoreError.duplicateRequest(requestPrefix(request.id))
             }
@@ -81,7 +87,18 @@ actor PendingDiaryReplyStore: Sendable {
         }
 
         return try await mutateRequest(id: id, now: now) { request in
-            guard [.readyToLaunch, .awaitingShortcut, .cancelled, .failed].contains(request.state) else {
+            switch request.state {
+            case .readyToLaunch, .awaitingShortcut:
+                return request
+            case .cancelled:
+                break
+            case .failed:
+                guard let rawCode = request.terminalReasonCode,
+                      let failureCode = DiaryReplyFailureCode(rawValue: rawCode),
+                      failureCode.isRetryable else {
+                    throw StoreError.failureNotRetryable(requestPrefix(id))
+                }
+            case .replyStored, .historyCommitted, .expired:
                 throw StoreError.invalidTransition(
                     requestPrefix(id),
                     request.state,
@@ -89,13 +106,14 @@ actor PendingDiaryReplyStore: Sendable {
                 )
             }
 
-            if DiaryReplyCapability.constantTimeEqual(request.capabilityDigest, capabilityDigest),
-               DiaryReplyCapability.constantTimeEqual(
-                   request.callbackCapabilityDigest,
-                   callbackCapabilityDigest
-               ),
-               [.readyToLaunch, .awaitingShortcut].contains(request.state) {
-                return request
+            guard !DiaryReplyCapability.constantTimeEqual(
+                request.capabilityDigest,
+                capabilityDigest
+            ), !DiaryReplyCapability.constantTimeEqual(
+                request.callbackCapabilityDigest,
+                callbackCapabilityDigest
+            ) else {
+                throw StoreError.retryCapabilityReuse(requestPrefix(id))
             }
 
             request.capabilityDigest = capabilityDigest
@@ -201,12 +219,15 @@ actor PendingDiaryReplyStore: Sendable {
     func markFailed(id: UUID, capability: Data, code: String, now: Date) async throws {
         try await mutateRequest(id: id, now: now) { request in
             try validateCallbackCapability(capability, for: request)
+            guard let failureCode = DiaryReplyFailureCode(rawValue: code) else {
+                throw StoreError.invalidFailureCode(requestPrefix(id))
+            }
             switch request.state {
             case .readyToLaunch, .awaitingShortcut:
                 request.state = .failed
                 request.updatedAt = now
-                request.terminalReasonCode = String(code.prefix(64))
-            case .failed where request.terminalReasonCode == String(code.prefix(64)):
+                request.terminalReasonCode = failureCode.rawValue
+            case .failed where request.terminalReasonCode == failureCode.rawValue:
                 return
             default:
                 throw StoreError.invalidTransition(
@@ -289,7 +310,11 @@ extension PendingDiaryReplyStore {
         case invalidCapability(String)
         case invalidTransition(String, DiaryReplyRequestState, DiaryReplyRequestState)
         case conflictingReply(String)
+        case retryCapabilityReuse(String)
+        case failureNotRetryable(String)
+        case invalidFailureCode(String)
         case durableWriteFailed
+        case directorySyncFailedAfterCommit
 
         var description: String {
             switch self {
@@ -311,8 +336,16 @@ extension PendingDiaryReplyStore {
                 return "Diary reply request \(prefix)… cannot move from \(from.rawValue) to \(to.rawValue)."
             case let .conflictingReply(prefix):
                 return "Diary reply request \(prefix)… already has a different reply."
+            case let .retryCapabilityReuse(prefix):
+                return "Diary reply request \(prefix)… retry capabilities must both rotate."
+            case let .failureNotRetryable(prefix):
+                return "Diary reply request \(prefix)… failure is not retryable."
+            case let .invalidFailureCode(prefix):
+                return "Diary reply request \(prefix)… failure code is invalid."
             case .durableWriteFailed:
                 return "Pending diary reply storage could not be updated."
+            case .directorySyncFailedAfterCommit:
+                return "Pending diary reply storage was replaced but directory synchronization failed."
             }
         }
 
@@ -338,8 +371,7 @@ private extension PendingDiaryReplyStore {
         guard candidate != records else { return result }
 
         try Task.checkCancellation()
-        try await persist(candidate)
-        records = candidate
+        try await commit(candidate)
         return result
     }
 
@@ -382,8 +414,7 @@ private extension PendingDiaryReplyStore {
                 var candidate = records
                 candidate[id] = request
                 try Task.checkCancellation()
-                try await persist(candidate)
-                records = candidate
+                try await commit(candidate)
             }
             throw StoreError.requestExpired(requestPrefix(id))
         }
@@ -393,12 +424,24 @@ private extension PendingDiaryReplyStore {
         var candidate = records
         candidate[id] = request
         try Task.checkCancellation()
-        try await persist(candidate)
-        records = candidate
+        try await commit(candidate)
         return result
     }
 
-    func persist(_ candidate: [UUID: PendingDiaryReply]) async throws {
+    enum CommitOutcome: Equatable {
+        case durable
+        case replacementCommittedButDirectorySyncFailed
+    }
+
+    func commit(_ candidate: [UUID: PendingDiaryReply]) async throws {
+        let outcome = try await persist(candidate)
+        records = candidate
+        if outcome == .replacementCommittedButDirectorySyncFailed {
+            throw StoreError.directorySyncFailedAfterCommit
+        }
+    }
+
+    func persist(_ candidate: [UUID: PendingDiaryReply]) async throws -> CommitOutcome {
         let document = Document(
             schemaVersion: Self.currentSchemaVersion,
             records: candidate.values.sorted { $0.id.uuidString < $1.id.uuidString }
@@ -414,11 +457,22 @@ private extension PendingDiaryReplyStore {
 
         let persistence = self.persistence
         let fileURL = self.fileURL
+        do {
+            try await persistence.beforeWrite()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw StoreError.durableWriteFailed
+        }
+        try Task.checkCancellation()
         let commit = Task.detached(priority: .utility) {
             try await persistence.write(data, fileURL)
         }
         do {
             try await commit.value
+            return .durable
+        } catch PendingDiaryReplyPersistenceError.replacementCommittedButDirectorySyncFailed {
+            return .replacementCommittedButDirectorySyncFailed
         } catch {
             throw StoreError.durableWriteFailed
         }
@@ -448,8 +502,16 @@ private extension PendingDiaryReplyStore {
     }
 
     func expireIfNeeded(_ request: inout PendingDiaryReply, now: Date) -> Bool {
-        guard request.expiresAt <= now,
-              ![.historyCommitted, .expired].contains(request.state) else {
+        guard request.expiresAt <= now else { return false }
+        switch request.state {
+        case .readyToLaunch, .awaitingShortcut, .cancelled:
+            break
+        case .failed:
+            guard let rawCode = request.terminalReasonCode,
+                  DiaryReplyFailureCode(rawValue: rawCode)?.isRetryable == true else {
+                return false
+            }
+        case .replyStored, .historyCommitted, .expired:
             return false
         }
         request.state = .expired
@@ -487,15 +549,22 @@ private extension PendingDiaryReplyStore {
 
         do {
             let document = try JSONDecoder().decode(Document.self, from: data)
-            guard (0...currentSchemaVersion).contains(document.schemaVersion) else {
+            guard document.schemaVersion >= 0 else {
+                throw SemanticCorruption()
+            }
+            guard document.schemaVersion <= currentSchemaVersion else {
                 throw StoreError.unsupportedSchemaVersion(document.schemaVersion)
             }
             var loaded: [UUID: PendingDiaryReply] = [:]
             for decodedRequest in document.records {
-                let request = migrateToCurrentSchema(decodedRequest)
-                guard (0...PendingDiaryReply.currentSchemaVersion).contains(request.schemaVersion) else {
-                    throw StoreError.unsupportedRequestSchemaVersion(request.schemaVersion)
+                guard decodedRequest.schemaVersion >= 0 else {
+                    throw SemanticCorruption()
                 }
+                guard decodedRequest.schemaVersion <= PendingDiaryReply.currentSchemaVersion else {
+                    throw StoreError.unsupportedRequestSchemaVersion(decodedRequest.schemaVersion)
+                }
+                let request = migrateToCurrentSchema(decodedRequest)
+                try validateRequest(request, requireCurrentSchema: true)
                 guard loaded.updateValue(request, forKey: request.id) == nil else {
                     throw StoreError.duplicateRequest(requestPrefixStatic(request.id))
                 }
@@ -526,6 +595,51 @@ private extension PendingDiaryReplyStore {
         String(id.uuidString.lowercased().prefix(8))
     }
 
+    static func validateRequest(
+        _ request: PendingDiaryReply,
+        requireCurrentSchema: Bool
+    ) throws {
+        if requireCurrentSchema,
+           request.schemaVersion != PendingDiaryReply.currentSchemaVersion {
+            throw StoreError.unsupportedRequestSchemaVersion(request.schemaVersion)
+        }
+        guard request.capabilityDigest.count == SHA256.byteCount,
+              request.callbackCapabilityDigest.count == SHA256.byteCount,
+              request.expiresAt > request.createdAt,
+              request.updatedAt >= request.createdAt,
+              request.attemptCount >= 0 else {
+            throw StoreError.invalidRequest(requestPrefixStatic(request.id))
+        }
+
+        switch request.state {
+        case .replyStored:
+            guard request.assistantText != nil else {
+                throw StoreError.invalidRequest(requestPrefixStatic(request.id))
+            }
+        case .historyCommitted:
+            guard request.kind == .diaryTurn,
+                  request.assistantText != nil,
+                  request.historyCommittedAt != nil else {
+                throw StoreError.invalidRequest(requestPrefixStatic(request.id))
+            }
+        case .cancelled:
+            guard request.terminalReasonCode == "shortcut_cancelled" else {
+                throw StoreError.invalidRequest(requestPrefixStatic(request.id))
+            }
+        case .failed:
+            guard let rawCode = request.terminalReasonCode,
+                  DiaryReplyFailureCode(rawValue: rawCode) != nil else {
+                throw StoreError.invalidRequest(requestPrefixStatic(request.id))
+            }
+        case .expired:
+            guard request.terminalReasonCode == "expired" else {
+                throw StoreError.invalidRequest(requestPrefixStatic(request.id))
+            }
+        case .readyToLaunch, .awaitingShortcut:
+            break
+        }
+    }
+
     static func migrateToCurrentSchema(_ request: PendingDiaryReply) -> PendingDiaryReply {
         guard request.schemaVersion < PendingDiaryReply.currentSchemaVersion else { return request }
         return PendingDiaryReply(
@@ -549,6 +663,8 @@ private extension PendingDiaryReplyStore {
         )
     }
 }
+
+private struct SemanticCorruption: Error {}
 
 nonisolated private enum AtomicPendingReplyWriter {
     static func write(_ data: Data, to destinationURL: URL) throws {
@@ -588,14 +704,22 @@ nonisolated private enum AtomicPendingReplyWriter {
         guard Darwin.close(descriptor) == 0 else { throw POSIXWriteError(code: errno) }
         isClosed = true
 
+        let directoryDescriptor = Darwin.open(directoryURL.path, O_RDONLY)
+        guard directoryDescriptor >= 0 else { throw POSIXWriteError(code: errno) }
+        var isDirectoryClosed = false
+        defer {
+            if !isDirectoryClosed { _ = Darwin.close(directoryDescriptor) }
+        }
+
         guard Darwin.rename(temporaryURL.path, destinationURL.path) == 0 else {
             throw POSIXWriteError(code: errno)
         }
 
-        let directoryDescriptor = Darwin.open(directoryURL.path, O_RDONLY)
-        if directoryDescriptor >= 0 {
-            _ = Darwin.fsync(directoryDescriptor)
-            _ = Darwin.close(directoryDescriptor)
+        let directorySyncSucceeded = Darwin.fsync(directoryDescriptor) == 0
+        let directoryCloseSucceeded = Darwin.close(directoryDescriptor) == 0
+        isDirectoryClosed = true
+        guard directorySyncSucceeded, directoryCloseSucceeded else {
+            throw PendingDiaryReplyPersistenceError.replacementCommittedButDirectorySyncFailed
         }
     }
 

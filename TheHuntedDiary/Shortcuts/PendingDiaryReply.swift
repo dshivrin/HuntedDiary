@@ -15,6 +15,25 @@ nonisolated enum DiaryReplyRequestState: String, Codable, Sendable {
     case expired
 }
 
+nonisolated enum DiaryReplyFailureCode: String, Codable, Sendable {
+    case shortcutError = "shortcut_error"
+    case shortcutUnavailable = "shortcut_unavailable"
+    case launchRejected = "launch_rejected"
+    case invalidShortcutConfiguration = "invalid_shortcut_configuration"
+    case unsupportedDevice = "unsupported_device"
+    case extensionUnavailable = "extension_unavailable"
+    case internalError = "internal_error"
+
+    var isRetryable: Bool {
+        switch self {
+        case .shortcutError, .shortcutUnavailable, .launchRejected:
+            return true
+        case .invalidShortcutConfiguration, .unsupportedDevice, .extensionUnavailable, .internalError:
+            return false
+        }
+    }
+}
+
 nonisolated struct PendingDiaryReply: Codable, Equatable, Sendable, Identifiable {
     static let currentSchemaVersion = 1
 
