@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import Security
 
-nonisolated struct DiaryReplyCapability: Equatable, Sendable, CustomStringConvertible {
+nonisolated struct DiaryReplyCapability: Sendable, CustomStringConvertible, CustomReflectable {
     static let capabilityByteCount = 32
     static let encodedCapabilityLength = 43
     static let maximumHandleLength = 36 + 1 + encodedCapabilityLength
@@ -93,6 +93,14 @@ nonisolated struct DiaryReplyCapability: Equatable, Sendable, CustomStringConver
         "DiaryReplyCapability(request: \(Self.prefix(for: requestID))…)"
     }
 
+    var customMirror: Mirror {
+        Mirror(
+            self,
+            children: ["request": "\(Self.prefix(for: requestID))…"],
+            displayStyle: .struct
+        )
+    }
+
     enum ParseError: Error, Equatable, CustomStringConvertible, LocalizedError {
         case handleTooLong
         case malformedHandle(requestPrefix: String?)
@@ -144,7 +152,7 @@ private extension DiaryReplyCapability {
         }
     }
 
-    static func prefix(for requestID: UUID) -> String {
+    nonisolated static func prefix(for requestID: UUID) -> String {
         String(requestID.uuidString.lowercased().prefix(8))
     }
 

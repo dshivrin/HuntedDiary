@@ -132,6 +132,24 @@ struct DiaryReplyCapabilityTests {
             #expect(!description.contains(capability.handle))
         }
     }
+
+    @Test func reflectionAndDumpExposeOnlyTheBoundedRequestPrefix() throws {
+        let capability = try DiaryReplyCapability(requestID: requestID, capability: Data(0..<32))
+        let mirror = Mirror(reflecting: capability)
+        let mirroredData = mirror.children.compactMap { $0.value as? Data }
+        var dumpOutput = ""
+
+        dump(capability, to: &dumpOutput)
+
+        #expect(mirroredData.isEmpty)
+        #expect(mirror.children.count == 1)
+        #expect(mirror.children.first?.label == "request")
+        #expect(mirror.children.first?.value as? String == "01234567…")
+        #expect(dumpOutput.contains("01234567…"))
+        #expect(!dumpOutput.contains("89ab-cdef-0123-456789abcdef"))
+        #expect(!dumpOutput.contains(capability.handle))
+        #expect(!dumpOutput.contains(capability.capability.hex))
+    }
 }
 
 private actor CapabilityValidator {
