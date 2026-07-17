@@ -60,7 +60,7 @@ final class PencilCanvasIdleCommitter: ObservableObject {
     private var task: Task<Void, Never>?
 
     @MainActor init(
-        delay: Duration = Constants.pencilCanvasIdleCommitDelay,
+        delay: Duration = .milliseconds(2500),
         clock: any PencilCanvasClock = ContinuousPencilCanvasClock()
     ) {
         self.delay = delay
