@@ -157,21 +157,43 @@ struct PendingDiaryReplyStoreTests {
         _ = try await store.prompt(id: request.id, capability: requestCapability, now: now)
         try await store.storeReply(id: request.id, capability: requestCapability, text: "arrived in time", now: now.addingTimeInterval(0.5))
 
-        #expect(try await store.reconcilableRequests(now: now.addingTimeInterval(2)).map(\.id) == [request.id])
-        try await store.markHistoryCommitted(id: request.id, now: now.addingTimeInterval(2))
+        let afterExpiry = now.addingTimeInterval(2)
+        await expectStoreError(.requestExpired(request.prefix)) {
+            _ = try await store.prompt(
+                id: request.id,
+                capability: requestCapability,
+                now: afterExpiry
+            )
+        }
+        await expectStoreError(.requestExpired(request.prefix)) {
+            try await store.storeReply(
+                id: request.id,
+                capability: requestCapability,
+                text: "arrived in time",
+                now: afterExpiry
+            )
+        }
+
+        let completed = try #require(await store.load(id: request.id))
+        #expect(completed.state == .replyStored)
+        #expect(completed.assistantText == "arrived in time")
+        #expect(try await store.reconcilableRequests(now: afterExpiry).map(\.id) == [request.id])
+        try await store.markHistoryCommitted(id: request.id, now: afterExpiry)
         #expect(try await store.load(id: request.id)?.state == .historyCommitted)
     }
 
-    @Test func completedSetupProbeRemainsProcessableAfterCapabilityExpiry() async throws {
+    @Test func completedSetupProbeRemainsLocallyLoadableAfterCapabilityExpiry() async throws {
         let fixture = try StoreFixture()
         let request = makeRequest(kind: .setupProbe, expiresAt: now.addingTimeInterval(1))
         let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
         try await store.create(request)
         _ = try await store.prompt(id: request.id, capability: requestCapability, now: now)
         try await store.storeReply(id: request.id, capability: requestCapability, text: "probe-ok", now: now.addingTimeInterval(0.5))
-        try await store.storeReply(id: request.id, capability: requestCapability, text: "probe-ok", now: now.addingTimeInterval(2))
 
-        #expect(try await store.load(id: request.id)?.state == .replyStored)
+        #expect(try await store.reconcilableRequests(now: now.addingTimeInterval(2)).isEmpty)
+        let completed = try #require(await store.load(id: request.id))
+        #expect(completed.state == .replyStored)
+        #expect(completed.assistantText == "probe-ok")
     }
 
     @Test func rejectsWrongRequestAndCallbackCapabilities() async throws {

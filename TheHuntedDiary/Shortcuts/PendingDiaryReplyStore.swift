@@ -130,6 +130,9 @@ actor PendingDiaryReplyStore: Sendable {
     func prompt(id: UUID, capability: Data, now: Date) async throws -> String {
         try await mutateRequest(id: id, now: now) { request in
             try validateRequestCapability(capability, for: request)
+            guard request.expiresAt > now else {
+                throw StoreError.requestExpired(requestPrefix(id))
+            }
             switch request.state {
             case .readyToLaunch:
                 request.state = .awaitingShortcut
@@ -150,6 +153,9 @@ actor PendingDiaryReplyStore: Sendable {
     func storeReply(id: UUID, capability: Data, text: String, now: Date) async throws {
         try await mutateRequest(id: id, now: now) { request in
             try validateRequestCapability(capability, for: request)
+            guard request.expiresAt > now else {
+                throw StoreError.requestExpired(requestPrefix(id))
+            }
 
             switch request.state {
             case .readyToLaunch, .awaitingShortcut:
