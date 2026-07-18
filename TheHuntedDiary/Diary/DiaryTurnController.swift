@@ -81,6 +81,7 @@ final class DiaryTurnController: ObservableObject {
             pendingStore: dependencies.pendingDiaryReplyStore,
             launcher: dependencies.shortcutReplyLauncher
         )
+        dependencies.registerDiaryReplyReconciler(self)
     }
 
     // Kept until Task 9 removes the legacy transport tests and types.
@@ -146,7 +147,12 @@ final class DiaryTurnController: ObservableObject {
             await reconcile(now: now)
             return
         }
-        guard case .failed = phase else { return }
+        switch phase {
+        case .failed, .awaitingShortcut:
+            break
+        default:
+            return
+        }
 
         if let activeRequestID {
             phase = .sending
@@ -165,6 +171,20 @@ final class DiaryTurnController: ObservableObject {
 
     func reconcile(now: Date = Date()) async {
         historyWriteError = nil
+        if activeRequestID == nil {
+            do {
+                if let request = try await pendingStore.latestActiveDiaryRequest(now: now) {
+                    activeRequestID = request.id
+                    recognizedText = request.recognizedText
+                    if let assistantText = request.assistantText {
+                        replyText = assistantText
+                    }
+                }
+            } catch {
+                historyWriteError = .historyWriteFailed
+                return
+            }
+        }
         let requests: [PendingDiaryReply]
         do {
             requests = try await pendingStore.reconcilableRequests(now: now)
@@ -266,7 +286,12 @@ private extension DiaryTurnController {
         try await pendingStore.create(request)
         guard isCurrentSubmission(submissionID) else { return }
         activeRequestID = id
-        await launch(authorization, shortcutName: settings.replyShortcutName, now: now)
+        await launch(
+            authorization,
+            shortcutName: settings.replyShortcutName,
+            now: now,
+            submissionID: submissionID
+        )
     }
 
     func retryRequest(id: UUID, now: Date) async {
@@ -274,12 +299,23 @@ private extension DiaryTurnController {
         let authorization: ShortcutSetupCapabilities
         do {
             authorization = try capabilities(id)
-            _ = try await pendingStore.prepareRetry(
+            let adopted = try await pendingStore.prepareRetry(
                 id: id,
                 capabilityDigest: authorization.requestAuthorization.capabilityDigest,
                 callbackCapabilityDigest: authorization.callbacks.callbackCapabilityDigest,
                 now: now
             )
+            guard DiaryReplyCapability.constantTimeEqual(
+                adopted.capabilityDigest,
+                authorization.requestAuthorization.capabilityDigest
+            ), DiaryReplyCapability.constantTimeEqual(
+                adopted.callbackCapabilityDigest,
+                authorization.callbacks.callbackCapabilityDigest
+            ) else {
+                throw PendingDiaryReplyStore.StoreError.invalidCapability(
+                    String(id.uuidString.lowercased().prefix(8))
+                )
+            }
         } catch {
             fail(stage: .openAI, error: .openAIReplyFailed)
             return
@@ -290,19 +326,20 @@ private extension DiaryTurnController {
     func launch(
         _ authorization: ShortcutSetupCapabilities,
         shortcutName: String,
-        now: Date
+        now: Date,
+        submissionID: UUID? = nil
     ) async {
+        let requestID = authorization.requestAuthorization.requestID
         do {
             try await launcher.launch(
                 shortcutName: shortcutName,
                 handle: authorization.requestAuthorization.handle,
                 callbacks: authorization.callbacks
             )
-            phase = .awaitingShortcut
         } catch {
             do {
                 try await pendingStore.markFailed(
-                    id: authorization.requestAuthorization.requestID,
+                    id: requestID,
                     capability: authorization.callbackCapability,
                     code: DiaryReplyFailureCode.launchRejected.rawValue,
                     now: now
@@ -310,7 +347,22 @@ private extension DiaryTurnController {
             } catch {
                 // The request remains durable and can be reconciled or retried after relaunch.
             }
-            fail(stage: .openAI, error: .openAIReplyFailed)
+            if ownsUI(requestID: requestID, submissionID: submissionID) {
+                fail(stage: .openAI, error: .openAIReplyFailed)
+            }
+            return
+        }
+
+        do {
+            try await pendingStore.markLaunchAccepted(id: requestID, now: now)
+        } catch {
+            if ownsUI(requestID: requestID, submissionID: submissionID) {
+                fail(stage: .openAI, error: .openAIReplyFailed)
+            }
+            return
+        }
+        if ownsUI(requestID: requestID, submissionID: submissionID) {
+            phase = .awaitingShortcut
         }
     }
 
@@ -353,7 +405,11 @@ private extension DiaryTurnController {
         guard let request = try? await pendingStore.load(id: activeRequestID) else { return }
         switch request.state {
         case .readyToLaunch, .awaitingShortcut:
-            phase = .awaitingShortcut
+            if request.launchAcceptedAt == nil {
+                fail(stage: .openAI, error: .openAIReplyFailed)
+            } else {
+                phase = .awaitingShortcut
+            }
         case .cancelled, .failed, .expired:
             fail(stage: .openAI, error: .openAIReplyFailed)
         case .replyStored:
@@ -371,6 +427,12 @@ private extension DiaryTurnController {
 
     func isCurrentSubmission(_ id: UUID) -> Bool {
         currentSubmissionID == id && !Task.isCancelled
+    }
+
+    func ownsUI(requestID: UUID, submissionID: UUID?) -> Bool {
+        guard activeRequestID == requestID else { return false }
+        guard let submissionID else { return true }
+        return currentSubmissionID == submissionID
     }
 
     func fail(stage: DiaryTurnFailure.Stage, error: AppError) {
@@ -395,6 +457,8 @@ private extension DiaryTurnController {
         )
     }
 }
+
+extension DiaryTurnController: DiaryReplyReconciling {}
 
 @MainActor
 private struct LegacyRejectedShortcutLauncher: ShortcutReplyLaunching {

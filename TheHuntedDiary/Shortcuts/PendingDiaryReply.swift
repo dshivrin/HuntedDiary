@@ -51,6 +51,7 @@ nonisolated struct PendingDiaryReply: Codable, Equatable, Sendable, Identifiable
     var state: DiaryReplyRequestState
     var attemptCount: Int
     var lastLaunchAt: Date?
+    var launchAcceptedAt: Date? = nil
     var assistantText: String?
     var historyCommittedAt: Date?
     var terminalReasonCode: String?

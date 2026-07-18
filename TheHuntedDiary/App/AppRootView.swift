@@ -43,8 +43,7 @@ struct AppRootView: View {
         }
         .onOpenURL { url in
             Task {
-                _ = await dependencies.diaryReplyFlow.handle(url)
-                await dependencies.shortcutSetupCoordinator.reconcile()
+                await dependencies.handleOpenURL(url)
             }
         }
         .task {

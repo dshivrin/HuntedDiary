@@ -236,6 +236,221 @@ struct DiaryShortcutTurnControllerTests {
         #expect(try await fixture.store.load(id: firstID)?.state == .historyCommitted)
     }
 
+    @Test func suspendedOldLaunchFailureCannotOverwriteNewSubmissionPhase() async throws {
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("SuspendedDiaryLaunch-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence { _, _ in }
+        )
+        let launcher = SuspendingFirstTask8Launcher(store: store)
+        let controller = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: Task8HistoryStore(),
+            recognizer: Task8Recognizer(texts: ["Old submission.", "New submission."]),
+            pendingStore: store,
+            launcher: launcher,
+            requestID: Task8IDSequence([firstID, secondID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+        let oldSubmission = Task {
+            await controller.submit(image: Self.makeImage(), now: now)
+        }
+        try await Self.waitUntil { launcher.hasSuspendedFirstLaunch }
+
+        await controller.submit(image: Self.makeImage(), now: now.addingTimeInterval(1))
+        #expect(controller.activeRequestID == secondID)
+        #expect(controller.phase == .awaitingShortcut)
+        launcher.failFirstLaunch()
+        await oldSubmission.value
+
+        #expect(controller.activeRequestID == secondID)
+        #expect(controller.recognizedText == "New submission.")
+        #expect(controller.phase == .awaitingShortcut)
+        #expect(try await store.load(id: firstID)?.state == .failed)
+    }
+
+    @Test func supersededSubmissionSuspendedDuringCreateIsPersistedButNeverLaunched() async throws {
+        let gate = SuspendingFirstTask8PersistenceGate()
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("SuspendedDiaryCreate-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence(
+                beforeWrite: { await gate.beforeWrite() },
+                write: { _, _ in }
+            )
+        )
+        let launcher = Task8Launcher(store: store, results: [.success(())])
+        let controller = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: Task8HistoryStore(),
+            recognizer: Task8Recognizer(texts: ["Old submission.", "New submission."]),
+            pendingStore: store,
+            launcher: launcher,
+            requestID: Task8IDSequence([firstID, secondID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+
+        let oldSubmission = Task {
+            await controller.submit(image: Self.makeImage(), now: now)
+        }
+        await gate.waitUntilSuspended()
+        let newSubmission = Task {
+            await controller.submit(image: Self.makeImage(), now: now.addingTimeInterval(1))
+        }
+        try await Self.waitUntil { controller.recognizedText == "New submission." }
+        await gate.releaseFirstWrite()
+        await oldSubmission.value
+        await newSubmission.value
+
+        #expect(launcher.launches.count == 1)
+        #expect(try DiaryReplyCapability(handle: launcher.launches[0].handle).requestID == secondID)
+        #expect(try await store.load(id: firstID)?.launchAcceptedAt == nil)
+        #expect(controller.activeRequestID == secondID)
+        #expect(controller.phase == .awaitingShortcut)
+    }
+
+    @Test func reconstructedPreHandoffRequestRetriesSameIdentityAndFrozenPrompt() async throws {
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("PreHandoffDiary-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence { _, _ in }
+        )
+        let original = Self.pendingDiaryRequest(id: firstID, now: now)
+        try await store.create(original)
+        let launcher = Task8Launcher(store: store)
+        let controller = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: Task8HistoryStore(),
+            recognizer: Task8Recognizer(),
+            pendingStore: store,
+            launcher: launcher,
+            requestID: Task8IDSequence([secondID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+
+        await controller.reconcile(now: now.addingTimeInterval(1))
+        #expect(controller.activeRequestID == firstID)
+        #expect(controller.phase == .failed(DiaryTurnFailure(stage: .openAI, error: .openAIReplyFailed)))
+        await controller.retry(now: now.addingTimeInterval(2))
+
+        let retried = try #require(await store.load(id: firstID))
+        #expect(launcher.launches.count == 1)
+        #expect(try DiaryReplyCapability(handle: launcher.launches[0].handle).requestID == firstID)
+        #expect(retried.prompt == original.prompt)
+        #expect(retried.recognizedText == original.recognizedText)
+        #expect(retried.attemptCount == 2)
+        #expect(retried.launchAcceptedAt != nil)
+    }
+
+    @Test func reconstructedAcceptedRequestWaitsAndExplicitRetryKeepsIdentity() async throws {
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("AcceptedDiary-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence { _, _ in }
+        )
+        try await store.create(Self.pendingDiaryRequest(id: firstID, now: now))
+        try await store.markLaunchAccepted(id: firstID, now: now.addingTimeInterval(1))
+        let launcher = Task8Launcher(store: store)
+        let controller = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: Task8HistoryStore(),
+            recognizer: Task8Recognizer(),
+            pendingStore: store,
+            launcher: launcher,
+            requestID: Task8IDSequence([secondID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+
+        await controller.reconcile(now: now.addingTimeInterval(2))
+        #expect(controller.activeRequestID == firstID)
+        #expect(controller.phase == .awaitingShortcut)
+        #expect(launcher.launches.isEmpty)
+
+        await controller.retry(now: now.addingTimeInterval(3))
+        #expect(launcher.launches.count == 1)
+        #expect(try DiaryReplyCapability(handle: launcher.launches[0].handle).requestID == firstID)
+        #expect(try await store.load(id: firstID)?.attemptCount == 2)
+    }
+
+    @Test func markHistoryCommitFailureReconstructsWithoutDuplicateAppend() async throws {
+        let gate = Task8PersistenceGate(failingWrite: 4)
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("MarkHistoryFailure-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence(
+                beforeWrite: { try await gate.beforeWrite() },
+                write: { _, _ in }
+            )
+        )
+        let history = Task8HistoryStore()
+        let launcher = Task8Launcher(store: store)
+        let first = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: history,
+            recognizer: Task8Recognizer(),
+            pendingStore: store,
+            launcher: launcher,
+            requestID: Task8IDSequence([firstID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+        await first.submit(image: Self.makeImage(), now: now)
+        try await Self.complete(launcher.launches[0], in: store, text: "Committed once.", now: now.addingTimeInterval(1))
+        await first.reconcile(now: now.addingTimeInterval(2))
+
+        #expect(history.appendedTurns.count == 1)
+        #expect(try await store.load(id: firstID)?.state == .replyStored)
+        let reconstructed = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: history,
+            recognizer: Task8Recognizer(),
+            pendingStore: store,
+            launcher: Task8Launcher(store: store),
+            requestID: Task8IDSequence([secondID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+        await reconstructed.reconcile(now: now.addingTimeInterval(3))
+
+        #expect(history.appendedTurns.count == 1)
+        #expect(try await store.load(id: firstID)?.state == .historyCommitted)
+    }
+
+    @Test func retryAfterMarkFailedPersistenceFailureAdoptsRotatedCapabilitiesBeforeLaunch() async throws {
+        let gate = Task8PersistenceGate(failingWrite: 2)
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("MarkFailedFailure-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence(
+                beforeWrite: { try await gate.beforeWrite() },
+                write: { _, _ in }
+            )
+        )
+        let launcher = Task8Launcher(
+            store: store,
+            results: [.failure(.handoffRejected), .success(())]
+        )
+        let controller = DiaryTurnController(
+            settingsProvider: { AppSettings() },
+            historyStore: Task8HistoryStore(),
+            recognizer: Task8Recognizer(),
+            pendingStore: store,
+            launcher: launcher,
+            requestID: Task8IDSequence([firstID]).next,
+            capabilities: Task8CapabilitySequence().next
+        )
+
+        await controller.submit(image: Self.makeImage(), now: now)
+        #expect(try await store.load(id: firstID)?.state == .readyToLaunch)
+        await controller.retry(now: now.addingTimeInterval(1))
+
+        let retried = try #require(await store.load(id: firstID))
+        let launchedRequest = try DiaryReplyCapability(handle: launcher.launches[1].handle)
+        #expect(retried.attemptCount == 2)
+        #expect(retried.capabilityDigest == launchedRequest.capabilityDigest)
+        #expect(retried.callbackCapabilityDigest == launcher.launches[1].callbacks.callbackCapabilityDigest)
+        #expect(retried.launchAcceptedAt != nil)
+        #expect(controller.phase == .awaitingShortcut)
+    }
+
     @Test func canvasDrawingRemainsUnchangedAcrossLaunchFailureRetryAndCompletion() async throws {
         let fixture = try makeFixture(launchResults: [.failure(.handoffRejected), .success(())])
         let model = PencilCanvasModel(drawing: Self.makeDrawing())
@@ -348,6 +563,40 @@ struct DiaryShortcutTurnControllerTests {
             historyCommittedAt: nil,
             terminalReasonCode: nil
         )
+    }
+
+    private static func pendingDiaryRequest(id: UUID, now: Date) -> PendingDiaryReply {
+        PendingDiaryReply(
+            schemaVersion: PendingDiaryReply.currentSchemaVersion,
+            id: id,
+            kind: .diaryTurn,
+            capabilityDigest: Data(repeating: 0x51, count: 32),
+            callbackCapabilityDigest: Data(repeating: 0x52, count: 32),
+            recognizedText: "Persisted recognized words.",
+            recognitionSource: .appleVision,
+            prompt: "Persisted frozen prompt.",
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(3_600),
+            updatedAt: now,
+            state: .readyToLaunch,
+            attemptCount: 1,
+            lastLaunchAt: now,
+            assistantText: nil,
+            historyCommittedAt: nil,
+            terminalReasonCode: nil
+        )
+    }
+
+    private static func waitUntil(
+        timeout: Duration = .seconds(2),
+        condition: @escaping @MainActor () -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition() {
+            guard clock.now < deadline else { throw Task8Error.timeout }
+            await Task.yield()
+        }
     }
 
     private static var priorTurn: ConversationTurn {
@@ -475,6 +724,72 @@ private final class Task8Launcher: ShortcutReplyLaunching {
 }
 
 @MainActor
+private final class SuspendingFirstTask8Launcher: ShortcutReplyLaunching {
+    let store: PendingDiaryReplyStore
+    private var continuation: CheckedContinuation<Void, Error>?
+    private(set) var hasSuspendedFirstLaunch = false
+    private var launchCount = 0
+
+    init(store: PendingDiaryReplyStore) {
+        self.store = store
+    }
+
+    func launch(shortcutName _: String, handle: String, callbacks _: ShortcutCallbacks) async throws {
+        launchCount += 1
+        let id = try DiaryReplyCapability(handle: handle).requestID
+        _ = try await store.load(id: id)
+        guard launchCount == 1 else { return }
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            hasSuspendedFirstLaunch = true
+        }
+    }
+
+    func failFirstLaunch() {
+        continuation?.resume(throwing: ShortcutReplyLauncherError.handoffRejected)
+        continuation = nil
+    }
+}
+
+private actor Task8PersistenceGate {
+    let failingWrite: Int
+    private var writeCount = 0
+
+    init(failingWrite: Int) {
+        self.failingWrite = failingWrite
+    }
+
+    func beforeWrite() throws {
+        writeCount += 1
+        if writeCount == failingWrite { throw Task8Error.persistence }
+    }
+}
+
+private actor SuspendingFirstTask8PersistenceGate {
+    private var hasSuspended = false
+    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
+    private var writeContinuation: CheckedContinuation<Void, Never>?
+
+    func beforeWrite() async {
+        guard !hasSuspended else { return }
+        hasSuspended = true
+        suspensionWaiters.forEach { $0.resume() }
+        suspensionWaiters.removeAll()
+        await withCheckedContinuation { writeContinuation = $0 }
+    }
+
+    func waitUntilSuspended() async {
+        guard !hasSuspended else { return }
+        await withCheckedContinuation { suspensionWaiters.append($0) }
+    }
+
+    func releaseFirstWrite() {
+        writeContinuation?.resume()
+        writeContinuation = nil
+    }
+}
+
+@MainActor
 private final class Task8IDSequence {
     private var values: [UUID]
     init(_ values: [UUID]) { self.values = values }
@@ -494,4 +809,4 @@ private final class Task8CapabilitySequence {
     }
 }
 
-private enum Task8Error: Error { case history }
+private enum Task8Error: Error { case history, persistence, timeout }

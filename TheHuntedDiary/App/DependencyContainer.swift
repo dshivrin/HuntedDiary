@@ -2,6 +2,11 @@ import Combine
 import Foundation
 
 @MainActor
+protocol DiaryReplyReconciling: AnyObject {
+    func reconcile(now: Date) async
+}
+
+@MainActor
 final class DependencyContainer: ObservableObject {
     @Published var settings: AppSettings {
         didSet { settings.persist(to: settingsDefaults) }
@@ -14,6 +19,7 @@ final class DependencyContainer: ObservableObject {
     let pendingDiaryReplyStore: PendingDiaryReplyStore
     let shortcutReplyLauncher: any ShortcutReplyLaunching
     let diaryReplyFlow: DiaryReplyFlow
+    private weak var diaryReplyReconciler: (any DiaryReplyReconciling)?
     lazy var shortcutSetupCoordinator = ShortcutSetupCoordinator(
         store: pendingDiaryReplyStore,
         launcher: shortcutReplyLauncher,
@@ -56,6 +62,16 @@ final class DependencyContainer: ObservableObject {
         guard name != settings.replyShortcutName else { return }
         settings.updateReplyShortcutName(name)
         shortcutSetupCoordinator.configuredShortcutNameDidChange()
+    }
+
+    func registerDiaryReplyReconciler(_ reconciler: any DiaryReplyReconciling) {
+        diaryReplyReconciler = reconciler
+    }
+
+    func handleOpenURL(_ url: URL, now: Date = Date()) async {
+        _ = await diaryReplyFlow.handle(url, now: now)
+        await diaryReplyReconciler?.reconcile(now: now)
+        await shortcutSetupCoordinator.reconcile(now: now)
     }
 }
 

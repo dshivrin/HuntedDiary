@@ -89,7 +89,19 @@ actor PendingDiaryReplyStore: Sendable {
         return try await mutateRequest(id: id, now: now) { request in
             switch request.state {
             case .readyToLaunch, .awaitingShortcut:
-                return request
+                guard request.kind == .diaryTurn else { return request }
+                if DiaryReplyCapability.constantTimeEqual(
+                    request.capabilityDigest,
+                    capabilityDigest
+                ), DiaryReplyCapability.constantTimeEqual(
+                    request.callbackCapabilityDigest,
+                    callbackCapabilityDigest
+                ) {
+                    return request
+                }
+                if request.lastLaunchAt == now {
+                    return request
+                }
             case .cancelled:
                 break
             case .failed:
@@ -121,6 +133,7 @@ actor PendingDiaryReplyStore: Sendable {
             request.state = .readyToLaunch
             request.attemptCount += 1
             request.lastLaunchAt = now
+            request.launchAcceptedAt = nil
             request.updatedAt = now
             request.terminalReasonCode = nil
             return request
@@ -164,9 +177,32 @@ actor PendingDiaryReplyStore: Sendable {
             request.state = .readyToLaunch
             request.attemptCount += 1
             request.lastLaunchAt = now
+            request.launchAcceptedAt = nil
             request.updatedAt = now
             request.terminalReasonCode = nil
             return request
+        }
+    }
+
+    func markLaunchAccepted(id: UUID, now: Date) async throws {
+        try await mutateRequest(id: id, now: now) { request in
+            guard request.kind == .diaryTurn else {
+                throw StoreError.invalidRequest(requestPrefix(id))
+            }
+            switch request.state {
+            case .readyToLaunch, .awaitingShortcut:
+                guard request.launchAcceptedAt == nil else { return }
+                request.launchAcceptedAt = now
+                request.updatedAt = now
+            case .replyStored, .historyCommitted:
+                return
+            case .cancelled, .failed, .expired:
+                throw StoreError.invalidTransition(
+                    requestPrefix(id),
+                    request.state,
+                    .awaitingShortcut
+                )
+            }
         }
     }
 
@@ -318,6 +354,30 @@ actor PendingDiaryReplyStore: Sendable {
                     $0.assistantText != nil
                 }
                 .sorted {
+                    if $0.createdAt == $1.createdAt {
+                        return $0.id.uuidString < $1.id.uuidString
+                    }
+                    return $0.createdAt < $1.createdAt
+                }
+        }
+    }
+
+    func latestActiveDiaryRequest(now: Date) async throws -> PendingDiaryReply? {
+        try await mutate { candidate in
+            for (id, var request) in candidate where expireIfNeeded(&request, now: now) {
+                candidate[id] = request
+            }
+            return candidate.values
+                .filter {
+                    guard $0.kind == .diaryTurn else { return false }
+                    switch $0.state {
+                    case .readyToLaunch, .awaitingShortcut, .replyStored, .cancelled, .failed:
+                        return true
+                    case .historyCommitted, .expired:
+                        return false
+                    }
+                }
+                .max {
                     if $0.createdAt == $1.createdAt {
                         return $0.id.uuidString < $1.id.uuidString
                     }
@@ -667,6 +727,7 @@ private extension PendingDiaryReplyStore {
               request.callbackCapabilityDigest.count == SHA256.byteCount,
               request.expiresAt > request.createdAt,
               request.updatedAt >= request.createdAt,
+              request.launchAcceptedAt.map({ $0 >= request.createdAt }) ?? true,
               request.attemptCount >= 0 else {
             throw StoreError.invalidRequest(requestPrefixStatic(request.id))
         }
@@ -717,6 +778,7 @@ private extension PendingDiaryReplyStore {
             state: request.state,
             attemptCount: request.attemptCount,
             lastLaunchAt: request.lastLaunchAt,
+            launchAcceptedAt: request.launchAcceptedAt,
             assistantText: request.assistantText,
             historyCommittedAt: request.historyCommittedAt,
             terminalReasonCode: request.terminalReasonCode

@@ -1,5 +1,9 @@
 import Foundation
 
+nonisolated enum DiaryHistoryIdempotencyError: Error, Equatable {
+    case conflictingTurn(String)
+}
+
 protocol IdempotentDiaryHistoryStoring: DiaryHistoryStoring {
     @discardableResult
     func appendIfAbsent(_ turn: ConversationTurn) throws -> Bool
@@ -16,6 +20,10 @@ extension PlainTextHistoryStore: IdempotentDiaryHistoryStoring {
             .appendingPathComponent(turn.id, isDirectory: false)
             .appendingPathExtension("md")
         guard !FileManager.default.fileExists(atPath: destination.path) else {
+            let existing = try loadAll().first { $0.id == turn.id }
+            guard existing == turn else {
+                throw DiaryHistoryIdempotencyError.conflictingTurn(turn.id)
+            }
             return false
         }
         try append(turn)
