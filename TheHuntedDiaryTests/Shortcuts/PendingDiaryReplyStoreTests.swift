@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import TheHuntedDiary
@@ -680,6 +681,61 @@ struct PendingDiaryReplyStoreTests {
         try await flushTask.value
         #expect(await completion.isComplete)
         try await store.flush()
+    }
+
+    @Test func callbackAuthorizationWaitsForAnInFlightCapabilityRotation() async throws {
+        let fixture = try StoreFixture()
+        let request = makeRequest(state: .cancelled)
+        let initialStore = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
+        try await initialStore.create(request)
+
+        let gate = PersistenceGate()
+        let live = PendingDiaryReplyPersistence.live
+        let persistence = PendingDiaryReplyPersistence { data, url in
+            await gate.beginAndWait()
+            try await live.write(data, url)
+        }
+        let store = try PendingDiaryReplyStore(
+            fileURL: fixture.storeURL,
+            persistence: persistence
+        )
+        let newRequestCapability = Data(repeating: 0x31, count: 32)
+        let newCallbackCapability = Data(repeating: 0x32, count: 32)
+        let retryTask = Task {
+            try await store.prepareRetry(
+                id: request.id,
+                capabilityDigest: Data(SHA256.hash(data: newRequestCapability)),
+                callbackCapabilityDigest: Data(SHA256.hash(data: newCallbackCapability)),
+                now: now.addingTimeInterval(1)
+            )
+        }
+        await gate.waitUntilStarted()
+
+        let started = CompletionProbe()
+        let completion = CompletionProbe()
+        let authorizationTask = Task {
+            await started.markComplete()
+            do {
+                let authorized = try await store.authorizedCallbackRequest(
+                    id: request.id,
+                    capability: newCallbackCapability
+                )
+                await completion.markComplete()
+                return authorized
+            } catch {
+                await completion.markComplete()
+                throw error
+            }
+        }
+        while !(await started.isComplete) { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(!(await completion.isComplete))
+
+        await gate.release()
+        let retried = try await retryTask.value
+        let authorized = try await authorizationTask.value
+        #expect(authorized == retried)
+        #expect(await completion.isComplete)
     }
 
     @Test func aCancelledQueuedMutationHandsTheGateToTheNextWaiter() async throws {
