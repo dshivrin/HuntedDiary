@@ -40,6 +40,11 @@ struct AppRootView: View {
                     .environmentObject(dependencies)
                 }
         }
+        .onOpenURL { url in
+            Task {
+                _ = await dependencies.diaryReplyFlow.handle(url)
+            }
+        }
     }
 }
 
