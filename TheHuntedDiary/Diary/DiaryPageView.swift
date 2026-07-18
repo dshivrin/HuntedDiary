@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DiaryPageView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var controller: DiaryTurnController
     private let replyFontName: String
     private let onRequestSettings: () -> Void
@@ -45,6 +46,15 @@ struct DiaryPageView: View {
         .onChange(of: controller.shouldPresentSettings) { _, shouldPresentSettings in
             if shouldPresentSettings {
                 onRequestSettings()
+            }
+        }
+        .task {
+            await controller.reconcile()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task {
+                await controller.reconcile()
             }
         }
     }
@@ -114,9 +124,9 @@ private struct RecoveryBanner: View {
 private extension DiaryTurnController {
     var isBusy: Bool {
         switch phase {
-        case .recognizing, .sending, .streamingReply:
+        case .recognizing, .sending, .streamingReply, .reconciling:
             return true
-        case .listening, .completed, .failed:
+        case .listening, .awaitingShortcut, .completed, .failed:
             return false
         }
     }
