@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct AppRootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var dependencies: DependencyContainer
     @State private var isShowingSettings = false
 
@@ -43,6 +44,16 @@ struct AppRootView: View {
         .onOpenURL { url in
             Task {
                 _ = await dependencies.diaryReplyFlow.handle(url)
+                await dependencies.shortcutSetupCoordinator.reconcile()
+            }
+        }
+        .task {
+            await dependencies.shortcutSetupCoordinator.reconcile()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task {
+                await dependencies.shortcutSetupCoordinator.reconcile()
             }
         }
     }

@@ -3,7 +3,10 @@ import Foundation
 
 @MainActor
 final class DependencyContainer: ObservableObject {
-    @Published var settings: AppSettings
+    @Published var settings: AppSettings {
+        didSet { settings.persist(to: settingsDefaults) }
+    }
+    private let settingsDefaults: UserDefaults
     let historyStore: PlainTextHistoryStore
     let apiKeyStore: APIKeyStore
     let appleVisionRecognizer: AppleVisionRecognizer
@@ -11,9 +14,15 @@ final class DependencyContainer: ObservableObject {
     let pendingDiaryReplyStore: PendingDiaryReplyStore
     let shortcutReplyLauncher: any ShortcutReplyLaunching
     let diaryReplyFlow: DiaryReplyFlow
+    lazy var shortcutSetupCoordinator = ShortcutSetupCoordinator(
+        store: pendingDiaryReplyStore,
+        launcher: shortcutReplyLauncher,
+        settings: self
+    )
 
     init(
         settings: AppSettings? = nil,
+        settingsDefaults: UserDefaults = .standard,
         historyStore: PlainTextHistoryStore? = nil,
         apiKeyStore: APIKeyStore? = nil,
         appleVisionRecognizer: AppleVisionRecognizer? = nil,
@@ -22,7 +31,8 @@ final class DependencyContainer: ObservableObject {
         shortcutReplyLauncher: (any ShortcutReplyLaunching)? = nil,
         diaryReplyFlow: DiaryReplyFlow? = nil
     ) {
-        self.settings = settings ?? AppSettings()
+        self.settingsDefaults = settingsDefaults
+        self.settings = settings ?? AppSettings(userDefaults: settingsDefaults)
         self.historyStore = historyStore ?? PlainTextHistoryStore()
         self.apiKeyStore = apiKeyStore ?? APIKeyStore()
         self.appleVisionRecognizer = appleVisionRecognizer ?? AppleVisionRecognizer()
@@ -41,4 +51,10 @@ final class DependencyContainer: ObservableObject {
         self.shortcutReplyLauncher = shortcutReplyLauncher ?? ShortcutReplyLauncher()
         self.diaryReplyFlow = diaryReplyFlow ?? DiaryReplyFlow(store: store)
     }
+
+    func updateReplyShortcutName(_ name: String) {
+        settings.updateReplyShortcutName(name)
+    }
 }
+
+extension DependencyContainer: ShortcutSetupSettingsOwning {}
