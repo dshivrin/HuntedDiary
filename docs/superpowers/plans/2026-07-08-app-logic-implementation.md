@@ -1,5 +1,7 @@
 # The Hunted Diary App Logic Implementation Plan
 
+> **Historical plan:** This direct-API MVP plan is retained only for project provenance. It was superseded by `2026-07-15-shortcuts-reply-refactor.md`; its API-key, direct transport, streaming, billing, image-fallback, and iOS 18 statements do not describe the current app.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the MVP app logic for an iPadOS diary: user writes with Apple Pencil, the app recognizes English handwriting, sends text and recent history to OpenAI with the user's API key, streams a diary-style reply, renders it with a handwriting font, and stores editable plain-text history locally.
