@@ -298,13 +298,44 @@ private extension DiaryTurnController {
         let settings = settingsProvider()
         let authorization: ShortcutSetupCapabilities
         do {
+            guard let current = try await pendingStore.load(id: id) else {
+                throw PendingDiaryReplyStore.StoreError.unknownRequest(
+                    String(id.uuidString.lowercased().prefix(8))
+                )
+            }
+            switch current.state {
+            case .readyToLaunch where current.launchAcceptedAt == nil:
+                break
+            case .cancelled, .failed:
+                break
+            case .readyToLaunch, .awaitingShortcut:
+                phase = .awaitingShortcut
+                return
+            case .replyStored, .historyCommitted, .expired:
+                throw PendingDiaryReplyStore.StoreError.invalidTransition(
+                    String(id.uuidString.lowercased().prefix(8)),
+                    current.state,
+                    .readyToLaunch
+                )
+            }
             authorization = try capabilities(id)
-            let adopted = try await pendingStore.prepareRetry(
-                id: id,
-                capabilityDigest: authorization.requestAuthorization.capabilityDigest,
-                callbackCapabilityDigest: authorization.callbacks.callbackCapabilityDigest,
-                now: now
-            )
+            let adopted: PendingDiaryReply
+            if current.state == .readyToLaunch, current.launchAcceptedAt == nil {
+                adopted = try await pendingStore.recoverDiaryLaunch(
+                    id: id,
+                    expectedAttemptCount: current.attemptCount,
+                    capabilityDigest: authorization.requestAuthorization.capabilityDigest,
+                    callbackCapabilityDigest: authorization.callbacks.callbackCapabilityDigest,
+                    now: now
+                )
+            } else {
+                adopted = try await pendingStore.prepareRetry(
+                    id: id,
+                    capabilityDigest: authorization.requestAuthorization.capabilityDigest,
+                    callbackCapabilityDigest: authorization.callbacks.callbackCapabilityDigest,
+                    now: now
+                )
+            }
             guard DiaryReplyCapability.constantTimeEqual(
                 adopted.capabilityDigest,
                 authorization.requestAuthorization.capabilityDigest

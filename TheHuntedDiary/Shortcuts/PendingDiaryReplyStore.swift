@@ -89,19 +89,7 @@ actor PendingDiaryReplyStore: Sendable {
         return try await mutateRequest(id: id, now: now) { request in
             switch request.state {
             case .readyToLaunch, .awaitingShortcut:
-                guard request.kind == .diaryTurn else { return request }
-                if DiaryReplyCapability.constantTimeEqual(
-                    request.capabilityDigest,
-                    capabilityDigest
-                ), DiaryReplyCapability.constantTimeEqual(
-                    request.callbackCapabilityDigest,
-                    callbackCapabilityDigest
-                ) {
-                    return request
-                }
-                if request.lastLaunchAt == now {
-                    return request
-                }
+                return request
             case .cancelled:
                 break
             case .failed:
@@ -134,6 +122,53 @@ actor PendingDiaryReplyStore: Sendable {
             request.attemptCount += 1
             request.lastLaunchAt = now
             request.launchAcceptedAt = nil
+            request.updatedAt = now
+            request.terminalReasonCode = nil
+            return request
+        }
+    }
+
+    func recoverDiaryLaunch(
+        id: UUID,
+        expectedAttemptCount: Int,
+        capabilityDigest: Data,
+        callbackCapabilityDigest: Data,
+        now: Date
+    ) async throws -> PendingDiaryReply {
+        guard capabilityDigest.count == SHA256.byteCount,
+              callbackCapabilityDigest.count == SHA256.byteCount else {
+            throw StoreError.invalidRequest(requestPrefix(id))
+        }
+
+        return try await mutateRequest(id: id, now: now) { request in
+            guard request.kind == .diaryTurn else {
+                throw StoreError.invalidRequest(requestPrefix(id))
+            }
+            guard request.state == .readyToLaunch,
+                  request.launchAcceptedAt == nil else {
+                throw StoreError.invalidTransition(
+                    requestPrefix(id),
+                    request.state,
+                    .readyToLaunch
+                )
+            }
+            guard request.attemptCount == expectedAttemptCount else {
+                return request
+            }
+            guard !DiaryReplyCapability.constantTimeEqual(
+                request.capabilityDigest,
+                capabilityDigest
+            ), !DiaryReplyCapability.constantTimeEqual(
+                request.callbackCapabilityDigest,
+                callbackCapabilityDigest
+            ) else {
+                throw StoreError.retryCapabilityReuse(requestPrefix(id))
+            }
+
+            request.capabilityDigest = capabilityDigest
+            request.callbackCapabilityDigest = callbackCapabilityDigest
+            request.attemptCount += 1
+            request.lastLaunchAt = now
             request.updatedAt = now
             request.terminalReasonCode = nil
             return request

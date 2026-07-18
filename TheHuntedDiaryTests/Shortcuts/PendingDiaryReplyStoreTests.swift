@@ -356,7 +356,7 @@ struct PendingDiaryReplyStoreTests {
     }
 
     @Test(arguments: [DiaryReplyRequestState.readyToLaunch, .awaitingShortcut])
-    func activeDiaryRetryPreparationAdoptsANewCapabilityPair(_ state: DiaryReplyRequestState) async throws {
+    func activeRetryPreparationRemainsIdempotent(_ state: DiaryReplyRequestState) async throws {
         let fixture = try StoreFixture()
         let request = makeRequest(state: state, attemptCount: 3)
         let store = try PendingDiaryReplyStore(fileURL: fixture.storeURL)
@@ -369,11 +369,7 @@ struct PendingDiaryReplyStoreTests {
             now: now.addingTimeInterval(1)
         )
 
-        #expect(prepared.id == request.id)
-        #expect(prepared.capabilityDigest == digest(newRequestCapability))
-        #expect(prepared.callbackCapabilityDigest == digest(newCallbackCapability))
-        #expect(prepared.attemptCount == request.attemptCount + 1)
-        #expect(prepared.state == .readyToLaunch)
+        #expect(prepared == request)
     }
 
     @Test func terminalRetryRejectsExactAndPartialCapabilityReuse() async throws {

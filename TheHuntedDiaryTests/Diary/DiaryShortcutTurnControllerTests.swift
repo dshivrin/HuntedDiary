@@ -367,9 +367,9 @@ struct DiaryShortcutTurnControllerTests {
         #expect(launcher.launches.isEmpty)
 
         await controller.retry(now: now.addingTimeInterval(3))
-        #expect(launcher.launches.count == 1)
-        #expect(try DiaryReplyCapability(handle: launcher.launches[0].handle).requestID == firstID)
-        #expect(try await store.load(id: firstID)?.attemptCount == 2)
+        #expect(launcher.launches.isEmpty)
+        #expect(try await store.load(id: firstID)?.attemptCount == 1)
+        #expect(controller.phase == .awaitingShortcut)
     }
 
     @Test func markHistoryCommitFailureReconstructsWithoutDuplicateAppend() async throws {

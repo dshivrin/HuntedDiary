@@ -37,6 +37,19 @@ struct PlainTextHistoryIdempotencyTests {
         #expect(try store.loadAll() == [original])
     }
 
+    @Test func appendIfAbsentMatchesFractionalTimestampAfterCrashBoundaryReload() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlainTextHistoryFractional-\(UUID().uuidString)", isDirectory: true)
+        let store = PlainTextHistoryStore(directoryURL: directory)
+        var turn = Self.turn(assistantText: "Exactly once after reload.")
+        turn.createdAt = Date(timeIntervalSince1970: 1_800_100_000.987_654)
+
+        #expect(try store.appendIfAbsent(turn))
+        let reconstructed = PlainTextHistoryStore(directoryURL: directory)
+        #expect(try !reconstructed.appendIfAbsent(turn))
+        #expect(try reconstructed.loadAll().count == 1)
+    }
+
     private static func turn(assistantText: String) -> ConversationTurn {
         ConversationTurn(
             id: "10000000-0000-0000-0000-000000000001",
