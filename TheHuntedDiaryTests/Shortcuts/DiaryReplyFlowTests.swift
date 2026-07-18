@@ -54,8 +54,121 @@ struct DiaryReplyFlowTests {
             requestID: unknownID,
             token: fixture.callbackToken
         )
-        #expect(await fixture.flow.handle(unknownURL, now: now) == .rejected(.requestUnavailable))
+        #expect(await fixture.flow.handle(unknownURL, now: now) == .rejected(.requestUnauthorized))
         #expect(try await fixture.store.load(id: fixture.requestID)?.state == .readyToLaunch)
+    }
+
+    @Test func forgedTokenCannotProbeExpiredOrCompletedRequestState() async throws {
+        let expired = try await FlowFixture(now: now)
+        let expiredForgedToken = try token(
+            for: Data(repeating: 0xEE, count: 32),
+            requestID: expired.requestID
+        )
+        let expiredForgedURL = try callbackURL(
+            host: "shortcut-cancel",
+            requestID: expired.requestID,
+            token: expiredForgedToken
+        )
+        #expect(
+            await expired.flow.handle(
+                expiredForgedURL,
+                now: now.addingTimeInterval(601)
+            ) == .rejected(.requestUnauthorized)
+        )
+
+        let completed = try await FlowFixture(now: now, idByte: 0x45)
+        try await completed.store.storeReply(
+            id: completed.requestID,
+            capability: completed.requestCapability,
+            text: "stored reply",
+            now: now
+        )
+        let completedForgedToken = try token(
+            for: Data(repeating: 0xEF, count: 32),
+            requestID: completed.requestID
+        )
+        let completedForgedURL = try callbackURL(
+            host: "shortcut-error",
+            requestID: completed.requestID,
+            token: completedForgedToken
+        )
+        #expect(
+            await completed.flow.handle(completedForgedURL, now: now)
+                == .rejected(.requestUnauthorized)
+        )
+
+        let historyCommitted = try await FlowFixture(now: now, idByte: 0x46)
+        try await historyCommitted.store.storeReply(
+            id: historyCommitted.requestID,
+            capability: historyCommitted.requestCapability,
+            text: "stored reply",
+            now: now
+        )
+        try await historyCommitted.store.markHistoryCommitted(
+            id: historyCommitted.requestID,
+            now: now
+        )
+        let historyForgedURL = try callbackURL(
+            host: "shortcut-cancel",
+            requestID: historyCommitted.requestID,
+            token: try token(
+                for: Data(repeating: 0xED, count: 32),
+                requestID: historyCommitted.requestID
+            )
+        )
+        #expect(
+            await historyCommitted.flow.handle(historyForgedURL, now: now)
+                == .rejected(.requestUnauthorized)
+        )
+
+        let cancelled = try await FlowFixture(now: now, idByte: 0x47)
+        #expect(await cancelled.flow.handle(cancelled.callbacks.cancelURL, now: now).isHandled)
+        let cancelledForgedURL = try callbackURL(
+            host: "shortcut-cancel",
+            requestID: cancelled.requestID,
+            token: try token(
+                for: Data(repeating: 0xEC, count: 32),
+                requestID: cancelled.requestID
+            )
+        )
+        #expect(
+            await cancelled.flow.handle(cancelledForgedURL, now: now)
+                == .rejected(.requestUnauthorized)
+        )
+
+        let failed = try await FlowFixture(now: now, idByte: 0x48)
+        #expect(await failed.flow.handle(failed.callbacks.errorURL, now: now).isHandled)
+        let failedForgedURL = try callbackURL(
+            host: "shortcut-error",
+            requestID: failed.requestID,
+            token: try token(
+                for: Data(repeating: 0xEB, count: 32),
+                requestID: failed.requestID
+            )
+        )
+        #expect(
+            await failed.flow.handle(failedForgedURL, now: now)
+                == .rejected(.requestUnauthorized)
+        )
+
+        let terminallyExpired = try await FlowFixture(now: now, idByte: 0x49)
+        _ = try await terminallyExpired.store.reconcilableRequests(
+            now: now.addingTimeInterval(601)
+        )
+        let terminallyExpiredForgedURL = try callbackURL(
+            host: "shortcut-cancel",
+            requestID: terminallyExpired.requestID,
+            token: try token(
+                for: Data(repeating: 0xEA, count: 32),
+                requestID: terminallyExpired.requestID
+            )
+        )
+        #expect(
+            await terminallyExpired.flow.handle(
+                terminallyExpiredForgedURL,
+                now: now.addingTimeInterval(602)
+            ) == .rejected(.requestUnauthorized)
+        )
     }
 
     @Test func replayAndCallbacksAfterReplyCompletionAreRejected() async throws {

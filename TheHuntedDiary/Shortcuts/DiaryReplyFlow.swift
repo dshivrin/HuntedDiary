@@ -64,10 +64,12 @@ actor DiaryReplyFlow: Sendable {
 
         let request: PendingDiaryReply
         do {
-            guard let stored = try await store.load(id: callback.authorization.requestID) else {
-                return .rejected(.requestUnavailable)
-            }
-            request = stored
+            request = try await store.authorizedCallbackRequest(
+                id: callback.authorization.requestID,
+                capability: callback.authorization.capability
+            )
+        } catch let error as PendingDiaryReplyStore.StoreError {
+            return .rejected(Self.map(error))
         } catch {
             return .rejected(.storageUnavailable)
         }

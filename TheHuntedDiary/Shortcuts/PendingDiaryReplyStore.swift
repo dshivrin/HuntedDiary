@@ -245,6 +245,14 @@ actor PendingDiaryReplyStore: Sendable {
         }
     }
 
+    func authorizedCallbackRequest(id: UUID, capability: Data) throws -> PendingDiaryReply {
+        guard let request = records[id] else {
+            throw StoreError.invalidCapability(requestPrefix(id))
+        }
+        try validateCallbackCapability(capability, for: request)
+        return request
+    }
+
     func load(id: UUID) async throws -> PendingDiaryReply? {
         try await acquireMutation()
         defer { releaseMutation() }
