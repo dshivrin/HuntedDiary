@@ -318,6 +318,33 @@ struct ShortcutSetupCoordinatorTests {
         #expect(verified.coordinator.state == .idle)
     }
 
+    @Test func dependencyContainerNoOpNameAssignmentPreservesVerifiedCoordinatorUIState() async throws {
+        var settings = AppSettings()
+        settings.markShortcutVerified(name: settings.replyShortcutName, at: now)
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("ShortcutSetupCoordinatorTests-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence { _, _ in }
+        )
+        let dependencies = DependencyContainer(
+            settings: settings,
+            pendingDiaryReplyStore: store,
+            shortcutReplyLauncher: RecordingSetupLauncher()
+        )
+        await dependencies.shortcutSetupCoordinator.reconcile(now: now)
+        #expect(dependencies.shortcutSetupCoordinator.state == .verified(
+            name: settings.replyShortcutName,
+            at: now
+        ))
+
+        dependencies.updateReplyShortcutName(settings.replyShortcutName)
+
+        #expect(dependencies.shortcutSetupCoordinator.state == .verified(
+            name: settings.replyShortcutName,
+            at: now
+        ))
+    }
+
     @Test func setupCopyIsExactAndDoesNotClaimAccountOrCapabilityDetection() {
         #expect(ShortcutSetupCopy.replyShortcutNameLabel == "Reply Shortcut Name")
         #expect(ShortcutSetupCopy.testShortcutButton == "Test Shortcut")
