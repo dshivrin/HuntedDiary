@@ -6,6 +6,7 @@ nonisolated struct AppSettings: Equatable {
     var lastVerifiedAt: Date?
     var activeSetupProbeID: UUID?
     var activeSetupShortcutName: String?
+    var activeSetupLaunchAccepted = false
     var selectedFontName: String = "Dancing Script"
     var recentHistoryLimit: Int = 12
     var maximumStoredTurns: Int = 100
@@ -16,6 +17,7 @@ nonisolated struct AppSettings: Equatable {
         static let lastVerifiedAt = "lastVerifiedAt"
         static let activeSetupProbeID = "activeSetupProbeID"
         static let activeSetupShortcutName = "activeSetupShortcutName"
+        static let activeSetupLaunchAccepted = "activeSetupLaunchAccepted"
     }
 
     init() {}
@@ -39,6 +41,9 @@ nonisolated struct AppSettings: Equatable {
         if probeName == replyShortcutName, let probeID {
             activeSetupProbeID = probeID
             activeSetupShortcutName = probeName
+            activeSetupLaunchAccepted = userDefaults.bool(
+                forKey: PersistenceKey.activeSetupLaunchAccepted
+            )
         }
     }
 
@@ -49,6 +54,7 @@ nonisolated struct AppSettings: Equatable {
         lastVerifiedAt = nil
         activeSetupProbeID = nil
         activeSetupShortcutName = nil
+        activeSetupLaunchAccepted = false
     }
 
     mutating func markShortcutVerified(name: String, at date: Date) {
@@ -57,17 +63,25 @@ nonisolated struct AppSettings: Equatable {
         lastVerifiedAt = date
         activeSetupProbeID = nil
         activeSetupShortcutName = nil
+        activeSetupLaunchAccepted = false
     }
 
     mutating func setActiveSetupProbe(id: UUID, shortcutName: String) {
         guard shortcutName == replyShortcutName else { return }
         activeSetupProbeID = id
         activeSetupShortcutName = shortcutName
+        activeSetupLaunchAccepted = false
+    }
+
+    mutating func markActiveSetupLaunchAccepted(id: UUID) {
+        guard activeSetupProbeID == id else { return }
+        activeSetupLaunchAccepted = true
     }
 
     mutating func clearActiveSetupProbe() {
         activeSetupProbeID = nil
         activeSetupShortcutName = nil
+        activeSetupLaunchAccepted = false
     }
 
     func persist(to userDefaults: UserDefaults) {
@@ -83,9 +97,14 @@ nonisolated struct AppSettings: Equatable {
         if let activeSetupProbeID, let activeSetupShortcutName {
             userDefaults.set(activeSetupProbeID.uuidString.lowercased(), forKey: PersistenceKey.activeSetupProbeID)
             userDefaults.set(activeSetupShortcutName, forKey: PersistenceKey.activeSetupShortcutName)
+            userDefaults.set(
+                activeSetupLaunchAccepted,
+                forKey: PersistenceKey.activeSetupLaunchAccepted
+            )
         } else {
             userDefaults.removeObject(forKey: PersistenceKey.activeSetupProbeID)
             userDefaults.removeObject(forKey: PersistenceKey.activeSetupShortcutName)
+            userDefaults.removeObject(forKey: PersistenceKey.activeSetupLaunchAccepted)
         }
     }
 }

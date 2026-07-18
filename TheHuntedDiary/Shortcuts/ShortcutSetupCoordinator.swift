@@ -179,6 +179,7 @@ final class ShortcutSetupCoordinator: ObservableObject {
 
         let request: PendingDiaryReply
         do {
+            _ = try await store.reconcilableRequests(now: now)
             guard let stored = try await store.load(id: id) else {
                 clearActiveProbe()
                 state = .failed(.requestUnavailable)
@@ -202,7 +203,11 @@ final class ShortcutSetupCoordinator: ObservableObject {
             settingsOwner.settings = settings
             state = .verified(name: shortcutName, at: now)
         case .readyToLaunch, .awaitingShortcut:
-            state = .awaitingReply(id)
+            if settingsOwner.settings.activeSetupLaunchAccepted {
+                state = .awaitingReply(id)
+            } else {
+                state = .failed(.launchRejected)
+            }
         case .cancelled:
             state = .failed(.cancelled)
         case .failed:
@@ -214,6 +219,10 @@ final class ShortcutSetupCoordinator: ObservableObject {
         case .expired, .historyCommitted, .replyStored:
             state = .failed(.requestUnavailable)
         }
+    }
+
+    func configuredShortcutNameDidChange() {
+        state = .idle
     }
 
     private func createAndLaunch(shortcutName: String, now: Date) async {
@@ -279,7 +288,15 @@ final class ShortcutSetupCoordinator: ObservableObject {
 
         switch request.state {
         case .readyToLaunch, .awaitingShortcut:
-            state = .awaitingReply(id)
+            if settingsOwner.settings.activeSetupLaunchAccepted {
+                state = .awaitingReply(id)
+            } else {
+                await recoverActiveLaunch(
+                    id: id,
+                    shortcutName: shortcutName,
+                    now: now
+                )
+            }
         case .replyStored:
             await reconcile(now: now)
         case .cancelled, .failed:
@@ -300,6 +317,7 @@ final class ShortcutSetupCoordinator: ObservableObject {
                 callbackCapabilityDigest: authorization.callbacks.callbackCapabilityDigest,
                 now: now
             )
+            markLaunchPending(id: id)
         } catch let error as PendingDiaryReplyStore.StoreError {
             if case .failureNotRetryable = error {
                 clearActiveProbe()
@@ -308,6 +326,28 @@ final class ShortcutSetupCoordinator: ObservableObject {
                 state = .failed(.storageUnavailable)
             }
             return
+        } catch {
+            state = .failed(.storageUnavailable)
+            return
+        }
+        await launch(
+            shortcutName: shortcutName,
+            authorization: authorization,
+            now: now
+        )
+    }
+
+    private func recoverActiveLaunch(id: UUID, shortcutName: String, now: Date) async {
+        let authorization: ShortcutSetupCapabilities
+        do {
+            authorization = try capabilities(id)
+            _ = try await store.recoverSetupProbeLaunch(
+                id: id,
+                capabilityDigest: authorization.requestAuthorization.capabilityDigest,
+                callbackCapabilityDigest: authorization.callbacks.callbackCapabilityDigest,
+                now: now
+            )
+            markLaunchPending(id: id)
         } catch {
             state = .failed(.storageUnavailable)
             return
@@ -330,6 +370,11 @@ final class ShortcutSetupCoordinator: ObservableObject {
                 handle: authorization.requestAuthorization.handle,
                 callbacks: authorization.callbacks
             )
+            var settings = settingsOwner.settings
+            settings.markActiveSetupLaunchAccepted(
+                id: authorization.requestAuthorization.requestID
+            )
+            settingsOwner.settings = settings
             state = .awaitingReply(authorization.requestAuthorization.requestID)
         } catch {
             do {
@@ -349,6 +394,13 @@ final class ShortcutSetupCoordinator: ObservableObject {
     private func clearActiveProbe() {
         var settings = settingsOwner.settings
         settings.clearActiveSetupProbe()
+        settingsOwner.settings = settings
+    }
+
+    private func markLaunchPending(id: UUID) {
+        var settings = settingsOwner.settings
+        guard settings.activeSetupProbeID == id else { return }
+        settings.activeSetupLaunchAccepted = false
         settingsOwner.settings = settings
     }
 

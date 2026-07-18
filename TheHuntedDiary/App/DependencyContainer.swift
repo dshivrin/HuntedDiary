@@ -54,6 +54,7 @@ final class DependencyContainer: ObservableObject {
 
     func updateReplyShortcutName(_ name: String) {
         settings.updateReplyShortcutName(name)
+        shortcutSetupCoordinator.configuredShortcutNameDidChange()
     }
 }
 

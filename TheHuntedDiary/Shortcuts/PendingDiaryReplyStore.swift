@@ -127,6 +127,49 @@ actor PendingDiaryReplyStore: Sendable {
         }
     }
 
+    func recoverSetupProbeLaunch(
+        id: UUID,
+        capabilityDigest: Data,
+        callbackCapabilityDigest: Data,
+        now: Date
+    ) async throws -> PendingDiaryReply {
+        guard capabilityDigest.count == SHA256.byteCount,
+              callbackCapabilityDigest.count == SHA256.byteCount else {
+            throw StoreError.invalidRequest(requestPrefix(id))
+        }
+
+        return try await mutateRequest(id: id, now: now) { request in
+            guard request.kind == .setupProbe else {
+                throw StoreError.invalidRequest(requestPrefix(id))
+            }
+            guard request.state == .readyToLaunch || request.state == .awaitingShortcut else {
+                throw StoreError.invalidTransition(
+                    requestPrefix(id),
+                    request.state,
+                    .readyToLaunch
+                )
+            }
+            guard !DiaryReplyCapability.constantTimeEqual(
+                request.capabilityDigest,
+                capabilityDigest
+            ), !DiaryReplyCapability.constantTimeEqual(
+                request.callbackCapabilityDigest,
+                callbackCapabilityDigest
+            ) else {
+                throw StoreError.retryCapabilityReuse(requestPrefix(id))
+            }
+
+            request.capabilityDigest = capabilityDigest
+            request.callbackCapabilityDigest = callbackCapabilityDigest
+            request.state = .readyToLaunch
+            request.attemptCount += 1
+            request.lastLaunchAt = now
+            request.updatedAt = now
+            request.terminalReasonCode = nil
+            return request
+        }
+    }
+
     func prompt(id: UUID, capability: Data, now: Date) async throws -> String {
         try await mutateRequest(id: id, now: now) { request in
             try validateRequestCapability(capability, for: request)

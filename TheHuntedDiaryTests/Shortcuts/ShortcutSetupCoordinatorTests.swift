@@ -36,6 +36,20 @@ struct ShortcutSetupCoordinatorTests {
         #expect(fixture.settings.settings.lastVerifiedShortcutName == nil)
         #expect(fixture.settings.settings.lastVerifiedAt == nil)
         #expect(fixture.settings.settings.activeSetupProbeID == requestID)
+        #expect(fixture.settings.settings.activeSetupLaunchAccepted)
+    }
+
+    @Test func acceptedLaunchWithoutCompletionExpiresInsteadOfWaitingForever() async throws {
+        let fixture = try setupFixture()
+        await fixture.coordinator.testShortcut(now: now)
+
+        await fixture.coordinator.reconcile(
+            now: now.addingTimeInterval(ShortcutSetupCoordinator.probeLifetime + 1)
+        )
+
+        #expect(fixture.coordinator.state == .failed(.requestUnavailable))
+        #expect(try await fixture.store.load(id: requestID)?.state == .expired)
+        #expect(fixture.settings.settings.lastVerifiedAt == nil)
     }
 
     @Test func completedProbeVerifiesExactNameWithoutBecomingHistoryReconcilable() async throws {
@@ -221,6 +235,89 @@ struct ShortcutSetupCoordinatorTests {
         #expect(reconstructed.state == .verified(name: "Tom’s Diary Reply", at: now.addingTimeInterval(2)))
     }
 
+    @Test func reconstructionBeforeHandoffRecoversTheSameProbeWithRotatedCapabilities() async throws {
+        let owner = TestSettingsOwner(settings: AppSettings())
+        owner.settings.setActiveSetupProbe(
+            id: requestID,
+            shortcutName: owner.settings.replyShortcutName
+        )
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("ShortcutSetupPreHandoff-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence { _, _ in }
+        )
+        let oldCapabilities = try ShortcutSetupCapabilities(
+            requestID: requestID,
+            requestCapability: Data(repeating: 0x71, count: 32),
+            callbackCapability: Data(repeating: 0x72, count: 32)
+        )
+        try await store.create(PendingDiaryReply(
+            schemaVersion: PendingDiaryReply.currentSchemaVersion,
+            id: requestID,
+            kind: .setupProbe,
+            capabilityDigest: oldCapabilities.requestAuthorization.capabilityDigest,
+            callbackCapabilityDigest: oldCapabilities.callbacks.callbackCapabilityDigest,
+            recognizedText: "",
+            recognitionSource: .appleVision,
+            prompt: ShortcutSetupCoordinator.setupProbePrompt,
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(ShortcutSetupCoordinator.probeLifetime),
+            updatedAt: now,
+            state: .readyToLaunch,
+            attemptCount: 1,
+            lastLaunchAt: now,
+            assistantText: nil,
+            historyCommittedAt: nil,
+            terminalReasonCode: nil
+        ))
+        let launcher = RecordingSetupLauncher(results: [.success(())])
+        let coordinator = ShortcutSetupCoordinator(
+            store: store,
+            launcher: launcher,
+            settings: owner,
+            requestID: UUID.init,
+            capabilities: CapabilitySequence().next
+        )
+
+        await coordinator.reconcile(now: now.addingTimeInterval(1))
+        #expect(coordinator.state == .failed(.launchRejected))
+        await coordinator.testShortcut(now: now.addingTimeInterval(2))
+
+        let launch = try #require(launcher.launches.first)
+        #expect(try DiaryReplyCapability(handle: launch.handle).requestID == requestID)
+        #expect(launch.handle != oldCapabilities.requestAuthorization.handle)
+        #expect(try await store.load(id: requestID)?.attemptCount == 2)
+        #expect(owner.settings.activeSetupProbeID == requestID)
+        #expect(owner.settings.activeSetupLaunchAccepted)
+    }
+
+    @Test func renamingImmediatelyClearsVerifiedAndAwaitingCoordinatorUIState() async throws {
+        let awaiting = try setupFixture()
+        await awaiting.coordinator.testShortcut(now: now)
+        #expect(awaiting.coordinator.state == .awaitingReply(requestID))
+        awaiting.settings.updateReplyShortcutName("Renamed Shortcut")
+        awaiting.coordinator.configuredShortcutNameDidChange()
+        #expect(awaiting.coordinator.state == .idle)
+
+        let verified = try setupFixture()
+        await verified.coordinator.testShortcut(now: now)
+        let launch = try #require(verified.launcher.launches.first)
+        try await verified.store.storeReply(
+            id: requestID,
+            capability: try DiaryReplyCapability(handle: launch.handle).capability,
+            text: "setup complete",
+            now: now.addingTimeInterval(1)
+        )
+        await verified.coordinator.reconcile(now: now.addingTimeInterval(2))
+        #expect(verified.coordinator.state == .verified(
+            name: "Tom’s Diary Reply",
+            at: now.addingTimeInterval(2)
+        ))
+        verified.settings.updateReplyShortcutName("Renamed Shortcut")
+        verified.coordinator.configuredShortcutNameDidChange()
+        #expect(verified.coordinator.state == .idle)
+    }
+
     @Test func setupCopyIsExactAndDoesNotClaimAccountOrCapabilityDetection() {
         #expect(ShortcutSetupCopy.replyShortcutNameLabel == "Reply Shortcut Name")
         #expect(ShortcutSetupCopy.testShortcutButton == "Test Shortcut")
@@ -229,6 +326,7 @@ struct ShortcutSetupCoordinatorTests {
         #expect(ShortcutSetupCopy.help.contains("Use Model"))
         #expect(ShortcutSetupCopy.help.contains("Complete Diary Reply"))
         #expect(ShortcutSetupCopy.accountGuidance.contains("optional"))
+        #expect(ShortcutSetupCopy.compatibilityGuidance.contains("iPad mini 6"))
         #expect(!ShortcutSetupCopy.accountGuidance.localizedCaseInsensitiveContains("subscription detected"))
         #expect(!ShortcutSetupCopy.accountGuidance.localizedCaseInsensitiveContains("account required"))
     }

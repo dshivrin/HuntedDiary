@@ -11,6 +11,7 @@ struct ShortcutAppSettingsTests {
         #expect(settings.lastVerifiedAt == nil)
         #expect(settings.activeSetupProbeID == nil)
         #expect(settings.activeSetupShortcutName == nil)
+        #expect(settings.activeSetupLaunchAccepted == false)
     }
 
     @Test func persistsConfiguredNameVerificationAndActiveProbeMetadata() throws {
@@ -21,6 +22,7 @@ struct ShortcutAppSettingsTests {
         settings.updateReplyShortcutName("Exact Custom Name")
         settings.markShortcutVerified(name: "Exact Custom Name", at: verifiedAt)
         settings.setActiveSetupProbe(id: probeID, shortcutName: "Exact Custom Name")
+        settings.markActiveSetupLaunchAccepted(id: probeID)
         settings.persist(to: defaults)
 
         let reconstructed = AppSettings(userDefaults: defaults)
@@ -30,6 +32,7 @@ struct ShortcutAppSettingsTests {
         #expect(reconstructed.lastVerifiedAt == verifiedAt)
         #expect(reconstructed.activeSetupProbeID == probeID)
         #expect(reconstructed.activeSetupShortcutName == "Exact Custom Name")
+        #expect(reconstructed.activeSetupLaunchAccepted)
     }
 
     @Test func renamingConfiguredShortcutInvalidatesVerificationAndActiveProbe() {
@@ -38,6 +41,7 @@ struct ShortcutAppSettingsTests {
         var settings = AppSettings()
         settings.markShortcutVerified(name: settings.replyShortcutName, at: verifiedAt)
         settings.setActiveSetupProbe(id: probeID, shortcutName: settings.replyShortcutName)
+        settings.markActiveSetupLaunchAccepted(id: probeID)
 
         settings.updateReplyShortcutName("Renamed Shortcut")
 
@@ -46,6 +50,7 @@ struct ShortcutAppSettingsTests {
         #expect(settings.lastVerifiedAt == nil)
         #expect(settings.activeSetupProbeID == nil)
         #expect(settings.activeSetupShortcutName == nil)
+        #expect(settings.activeSetupLaunchAccepted == false)
     }
 
     @Test func assigningTheSameExactNamePreservesVerificationAndProbe() {
@@ -54,11 +59,13 @@ struct ShortcutAppSettingsTests {
         var settings = AppSettings()
         settings.markShortcutVerified(name: settings.replyShortcutName, at: verifiedAt)
         settings.setActiveSetupProbe(id: probeID, shortcutName: settings.replyShortcutName)
+        settings.markActiveSetupLaunchAccepted(id: probeID)
 
         settings.updateReplyShortcutName(settings.replyShortcutName)
 
         #expect(settings.lastVerifiedAt == verifiedAt)
         #expect(settings.activeSetupProbeID == probeID)
+        #expect(settings.activeSetupLaunchAccepted)
     }
 
     @Test func reconstructionRejectsMismatchedOrPartialVerificationMetadata() throws {
@@ -75,6 +82,7 @@ struct ShortcutAppSettingsTests {
         #expect(reconstructed.lastVerifiedAt == nil)
         #expect(reconstructed.activeSetupProbeID == nil)
         #expect(reconstructed.activeSetupShortcutName == nil)
+        #expect(reconstructed.activeSetupLaunchAccepted == false)
     }
 
     private func makeDefaults() throws -> UserDefaults {

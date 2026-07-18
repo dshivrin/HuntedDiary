@@ -6,6 +6,7 @@ nonisolated enum ShortcutSetupCopy {
     static let setupGuideLink = "Setup Guide"
     static let help = "Create a Shortcut with Get Pending Diary Prompt, Use Model set to the ChatGPT Extension Model, and Complete Diary Reply, in that order."
     static let accountGuidance = "A ChatGPT account is optional. A complete Test Shortcut round trip is the only verification; Tom’s Diary cannot inspect account, subscription, extension, region, or Shortcut availability in advance."
+    static let compatibilityGuidance = "iPad mini 6 cannot run this workflow because it does not support Apple Intelligence."
 }
 
 struct ShortcutSettingsSection: View {
@@ -115,6 +116,7 @@ private struct ShortcutSetupGuideView: View {
 
             Section("Requirements") {
                 Text("Use an Apple Intelligence-compatible iPhone or iPad with iOS or iPadOS 26 and the ChatGPT extension enabled.")
+                Text(ShortcutSetupCopy.compatibilityGuidance)
                 Text("A ChatGPT account is optional.")
             }
 
