@@ -38,8 +38,7 @@ extension PlainTextHistoryStore: IdempotentDiaryHistoryStoring {
         ISO8601DateFormatter.history.string(from: lhs.createdAt) ==
             ISO8601DateFormatter.history.string(from: rhs.createdAt) &&
         lhs.recognitionSource == rhs.recognitionSource &&
-        lhs.model == rhs.model &&
-        lhs.openAIStoreEnabled == rhs.openAIStoreEnabled &&
+        lhs.generationProvider == rhs.generationProvider &&
         normalizeLineEndings(lhs.userText) == normalizeLineEndings(rhs.userText) &&
         normalizeLineEndings(lhs.assistantText) == normalizeLineEndings(rhs.assistantText)
     }

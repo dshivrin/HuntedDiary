@@ -7,15 +7,9 @@ import UIKit
 struct DiaryIdleSubmissionTask2Tests {
     @Test func idleCommitRoutesToSubmitAndPreservesMountedCanvasModel() async throws {
         let recognizer = IdleSubmissionRecognizer()
-        let replyClient = IdleSubmissionReplyClient()
         let historyStore = IdleSubmissionHistoryStore()
-        let controller = DiaryTurnController(
-            settingsProvider: { AppSettings() },
-            apiKeyStore: IdleSubmissionAPIKeyStore(),
-            historyStore: historyStore,
-            recognizer: recognizer,
-            openAIClient: replyClient
-        )
+        let fixture = try makeController(recognizer: recognizer, historyStore: historyStore)
+        let controller = fixture.controller
         let model = PencilCanvasModel(drawing: Self.makeDrawing())
         let originalDrawing = model.drawing.dataRepresentation()
         let clock = IdleSubmissionClock()
@@ -36,50 +30,41 @@ struct DiaryIdleSubmissionTask2Tests {
         }
 
         #expect(recognizer.callCount == 0)
-        #expect(replyClient.callCount == 0)
+        #expect(fixture.launcher.callCount == 0)
         #expect(model.drawing.dataRepresentation() == originalDrawing)
 
         await clock.advance(by: .milliseconds(1))
-        try await Self.waitUntil { controller.phase == .completed }
+        try await Self.waitUntil { controller.phase == .awaitingShortcut }
+        await controller.reconcile()
 
         #expect(recognizer.callCount == 1)
-        #expect(replyClient.callCount == 1)
+        #expect(fixture.launcher.callCount == 1)
         #expect(historyStore.appendedTurns.count == 1)
         #expect(model.drawing.dataRepresentation() == originalDrawing)
     }
 
-    @Test func emptyLocalRecognitionStopsWithoutNetworkFallback() async {
+    @Test func emptyLocalRecognitionStopsWithoutNetworkFallback() async throws {
         let recognizer = IdleSubmissionRecognizer(text: "   ", confidence: nil)
-        let replyClient = IdleSubmissionReplyClient()
-        let controller = DiaryTurnController(
-            settingsProvider: { AppSettings() },
-            apiKeyStore: IdleSubmissionAPIKeyStore(),
-            historyStore: IdleSubmissionHistoryStore(),
-            recognizer: recognizer,
-            openAIClient: replyClient
-        )
+        let fixture = try makeController(recognizer: recognizer)
+        let controller = fixture.controller
 
         await controller.submit(image: Self.makeImage())
 
         #expect(controller.phase == .failed(DiaryTurnFailure(stage: .recognition, error: .emptyRecognitionResult)))
         #expect(recognizer.callCount == 1)
-        #expect(replyClient.callCount == 0)
+        #expect(fixture.launcher.callCount == 0)
     }
 
-    @Test func lowConfidenceLocalRecognitionDoesNotUseImageFallback() async {
+    @Test func lowConfidenceLocalRecognitionDoesNotUseImageFallback() async throws {
         let recognizer = IdleSubmissionRecognizer(text: "Faint but usable.", confidence: 0.12)
-        let replyClient = IdleSubmissionReplyClient()
         let historyStore = IdleSubmissionHistoryStore()
-        let controller = DiaryTurnController(
-            settingsProvider: { AppSettings() },
-            apiKeyStore: IdleSubmissionAPIKeyStore(),
-            historyStore: historyStore,
-            recognizer: recognizer,
-            openAIClient: replyClient
-        )
+        let fixture = try makeController(recognizer: recognizer, historyStore: historyStore)
+        let controller = fixture.controller
 
         await controller.submit(image: Self.makeImage())
 
+        #expect(controller.phase == .awaitingShortcut)
+        await controller.reconcile()
         #expect(controller.phase == .completed)
         #expect(recognizer.callCount == 1)
         #expect(historyStore.appendedTurns.first?.recognitionSource == .appleVision)
@@ -87,13 +72,8 @@ struct DiaryIdleSubmissionTask2Tests {
 
     @Test func automaticSubmissionDoesNotCancelItsOwnRecognitionTask() async throws {
         let recognizer = CancellationAwareIdleSubmissionRecognizer()
-        let controller = DiaryTurnController(
-            settingsProvider: { AppSettings() },
-            apiKeyStore: IdleSubmissionAPIKeyStore(),
-            historyStore: IdleSubmissionHistoryStore(),
-            recognizer: recognizer,
-            openAIClient: IdleSubmissionReplyClient()
-        )
+        let fixture = try makeController(recognizer: recognizer)
+        let controller = fixture.controller
         let model = PencilCanvasModel(drawing: Self.makeDrawing())
 
         DiaryPageView.idleSubmissionRoute(
@@ -101,9 +81,9 @@ struct DiaryIdleSubmissionTask2Tests {
             canvasSize: CGSize(width: 500, height: 700)
         ).handler(model)
         try await Self.waitUntil {
-            controller.phase == .completed || controller.activeRecovery != nil
+            controller.phase == .awaitingShortcut || controller.activeRecovery != nil
         }
-
+        await controller.reconcile()
         #expect(controller.phase == .completed)
         #expect(recognizer.observedCancellation == false)
     }
@@ -111,13 +91,8 @@ struct DiaryIdleSubmissionTask2Tests {
     @Test func staleRecognitionCompletionCannotOverwriteNewerTurn() async throws {
         let recognizer = SuspendingIdleSubmissionRecognizer()
         let historyStore = IdleSubmissionHistoryStore()
-        let controller = DiaryTurnController(
-            settingsProvider: { AppSettings() },
-            apiKeyStore: IdleSubmissionAPIKeyStore(),
-            historyStore: historyStore,
-            recognizer: recognizer,
-            openAIClient: IdleSubmissionReplyClient()
-        )
+        let fixture = try makeController(recognizer: recognizer, historyStore: historyStore)
+        let controller = fixture.controller
         let model = PencilCanvasModel(drawing: Self.makeDrawing())
         let idleCommit = DiaryPageView.idleSubmissionRoute(
             controller: controller,
@@ -128,7 +103,8 @@ struct DiaryIdleSubmissionTask2Tests {
         try await Self.waitUntil { recognizer.hasSuspendedFirstCall }
 
         idleCommit(model)
-        try await Self.waitUntil { controller.phase == .completed }
+        try await Self.waitUntil { controller.phase == .awaitingShortcut }
+        await controller.reconcile()
         #expect(controller.recognizedText == "Newest local ink.")
 
         recognizer.resumeFirstCall()
@@ -138,6 +114,29 @@ struct DiaryIdleSubmissionTask2Tests {
 
         #expect(controller.recognizedText == "Newest local ink.")
         #expect(historyStore.appendedTurns.map(\.userText) == ["Newest local ink."])
+    }
+
+    private func makeController(
+        recognizer: any HandwritingRecognizer,
+        historyStore: IdleSubmissionHistoryStore? = nil
+    ) throws -> (controller: DiaryTurnController, launcher: IdleSubmissionLauncher) {
+        let resolvedHistoryStore = historyStore ?? IdleSubmissionHistoryStore()
+        let store = try PendingDiaryReplyStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("IdleSubmission-\(UUID().uuidString).json"),
+            persistence: PendingDiaryReplyPersistence { _, _ in }
+        )
+        let launcher = IdleSubmissionLauncher(store: store)
+        return (
+            DiaryTurnController(
+                settingsProvider: { AppSettings() },
+                historyStore: resolvedHistoryStore,
+                recognizer: recognizer,
+                pendingStore: store,
+                launcher: launcher
+            ),
+            launcher
+        )
     }
 
     private static func waitUntil(
@@ -238,32 +237,37 @@ private final class SuspendingIdleSubmissionRecognizer: HandwritingRecognizer {
     }
 }
 
-private final class IdleSubmissionReplyClient: OpenAIReplyStreaming {
+private final class IdleSubmissionLauncher: ShortcutReplyLaunching {
+    let store: PendingDiaryReplyStore
     private(set) var callCount = 0
 
-    func replyStream(
-        apiKey _: String,
-        prompt _: DiaryPromptBuilder.Prompt,
-        settings _: AppSettings
-    ) -> AsyncThrowingStream<String, Error> {
+    init(store: PendingDiaryReplyStore) {
+        self.store = store
+    }
+
+    func launch(shortcutName _: String, handle: String, callbacks _: ShortcutCallbacks) async throws {
         callCount += 1
-        return AsyncThrowingStream { continuation in
-            continuation.yield("The reply.")
-            continuation.finish()
-        }
+        let authorization = try DiaryReplyCapability(handle: handle)
+        try await store.storeReply(
+            id: authorization.requestID,
+            capability: authorization.capability,
+            text: "The reply.",
+            now: Date()
+        )
     }
 }
 
-private final class IdleSubmissionHistoryStore: DiaryHistoryStoring {
+private final class IdleSubmissionHistoryStore: IdempotentDiaryHistoryStoring {
     private(set) var appendedTurns: [ConversationTurn] = []
 
     func loadRecent(limit _: Int) throws -> [ConversationTurn] { [] }
     func append(_ turn: ConversationTurn) throws { appendedTurns.append(turn) }
+    func appendIfAbsent(_ turn: ConversationTurn) throws -> Bool {
+        guard !appendedTurns.contains(where: { $0.id == turn.id }) else { return false }
+        appendedTurns.append(turn)
+        return true
+    }
     func pruneOldestTurns(keepingMaximum _: Int) throws {}
-}
-
-private struct IdleSubmissionAPIKeyStore: APIKeyLoading {
-    func load() throws -> String? { "sk-test" }
 }
 
 private enum IdleSubmissionTestError: Error {

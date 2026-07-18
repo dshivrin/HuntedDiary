@@ -330,7 +330,7 @@ struct DiaryShortcutTurnControllerTests {
 
         await controller.reconcile(now: now.addingTimeInterval(1))
         #expect(controller.activeRequestID == firstID)
-        #expect(controller.phase == .failed(DiaryTurnFailure(stage: .openAI, error: .openAIReplyFailed)))
+        #expect(controller.phase == .failed(DiaryTurnFailure(stage: .shortcut, error: .shortcutReplyFailed)))
         await controller.retry(now: now.addingTimeInterval(2))
 
         let retried = try #require(await store.load(id: firstID))

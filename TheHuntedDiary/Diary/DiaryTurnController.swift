@@ -4,10 +4,9 @@ import UIKit
 
 struct DiaryTurnFailure: Equatable {
     enum Stage: Equatable {
-        case apiKey
         case canvasExport
         case recognition
-        case openAI
+        case shortcut
     }
 
     var stage: Stage
@@ -18,7 +17,6 @@ enum DiaryTurnPhase: Equatable {
     case listening
     case recognizing
     case sending
-    case streamingReply
     case awaitingShortcut
     case reconciling
     case completed
@@ -82,30 +80,6 @@ final class DiaryTurnController: ObservableObject {
             launcher: dependencies.shortcutReplyLauncher
         )
         dependencies.registerDiaryReplyReconciler(self)
-    }
-
-    // Kept until Task 9 removes the legacy transport tests and types.
-    convenience init(
-        settingsProvider: @escaping SettingsProvider,
-        apiKeyStore _: any APIKeyLoading,
-        historyStore: any DiaryHistoryStoring,
-        recognizer: any HandwritingRecognizer,
-        openAIClient _: any OpenAIReplyStreaming,
-        promptBuilder: DiaryPromptBuilder = DiaryPromptBuilder()
-    ) {
-        let store = try! PendingDiaryReplyStore(
-            fileURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("LegacyDiaryTurnController-\(UUID().uuidString).json"),
-            persistence: PendingDiaryReplyPersistence { _, _ in }
-        )
-        self.init(
-            settingsProvider: settingsProvider,
-            historyStore: LegacyIdempotentHistoryStore(historyStore),
-            recognizer: recognizer,
-            pendingStore: store,
-            launcher: LegacyRejectedShortcutLauncher(),
-            promptBuilder: promptBuilder
-        )
     }
 
     var canRetry: Bool {
@@ -348,7 +322,7 @@ private extension DiaryTurnController {
                 )
             }
         } catch {
-            fail(stage: .openAI, error: .openAIReplyFailed)
+            fail(stage: .shortcut, error: .shortcutReplyFailed)
             return
         }
         await launch(authorization, shortcutName: settings.replyShortcutName, now: now)
@@ -379,7 +353,7 @@ private extension DiaryTurnController {
                 // The request remains durable and can be reconciled or retried after relaunch.
             }
             if ownsUI(requestID: requestID, submissionID: submissionID) {
-                fail(stage: .openAI, error: .openAIReplyFailed)
+                fail(stage: .shortcut, error: .shortcutReplyFailed)
             }
             return
         }
@@ -388,7 +362,7 @@ private extension DiaryTurnController {
             try await pendingStore.markLaunchAccepted(id: requestID, now: now)
         } catch {
             if ownsUI(requestID: requestID, submissionID: submissionID) {
-                fail(stage: .openAI, error: .openAIReplyFailed)
+                fail(stage: .shortcut, error: .shortcutReplyFailed)
             }
             return
         }
@@ -404,8 +378,7 @@ private extension DiaryTurnController {
             id: request.id.uuidString.lowercased(),
             createdAt: request.createdAt,
             recognitionSource: request.recognitionSource,
-            model: settings.replyModel,
-            openAIStoreEnabled: settings.openAIStoreEnabled,
+            generationProvider: .chatGPTExtensionShortcut,
             userText: request.recognizedText,
             assistantText: assistantText
         )
@@ -437,12 +410,12 @@ private extension DiaryTurnController {
         switch request.state {
         case .readyToLaunch, .awaitingShortcut:
             if request.launchAcceptedAt == nil {
-                fail(stage: .openAI, error: .openAIReplyFailed)
+                fail(stage: .shortcut, error: .shortcutReplyFailed)
             } else {
                 phase = .awaitingShortcut
             }
         case .cancelled, .failed, .expired:
-            fail(stage: .openAI, error: .openAIReplyFailed)
+            fail(stage: .shortcut, error: .shortcutReplyFailed)
         case .replyStored:
             if request.assistantText != nil, historyWriteError != nil {
                 phase = .completed
@@ -490,10 +463,3 @@ private extension DiaryTurnController {
 }
 
 extension DiaryTurnController: DiaryReplyReconciling {}
-
-@MainActor
-private struct LegacyRejectedShortcutLauncher: ShortcutReplyLaunching {
-    func launch(shortcutName _: String, handle _: String, callbacks _: ShortcutCallbacks) async throws {
-        throw ShortcutReplyLauncherError.handoffRejected
-    }
-}

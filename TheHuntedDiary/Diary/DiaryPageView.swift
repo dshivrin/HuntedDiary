@@ -124,7 +124,7 @@ private struct RecoveryBanner: View {
 private extension DiaryTurnController {
     var isBusy: Bool {
         switch phase {
-        case .recognizing, .sending, .streamingReply, .reconciling:
+        case .recognizing, .sending, .reconciling:
             return true
         case .listening, .awaitingShortcut, .completed, .failed:
             return false

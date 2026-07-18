@@ -1,13 +1,30 @@
+import CoreText
 import Foundation
 
 nonisolated struct AppSettings: Equatable {
+    struct HandwritingFont: Equatable, Identifiable {
+        let displayName: String
+        let fontName: String
+        let resourceName: String
+
+        var id: String { fontName }
+    }
+
+    static let availableHandwritingFonts = [
+        HandwritingFont(
+            displayName: "Caveat Regular",
+            fontName: "Caveat-Regular",
+            resourceName: "Caveat-Regular.ttf"
+        )
+    ]
+
     var replyShortcutName: String = "Tom’s Diary Reply"
     var lastVerifiedShortcutName: String?
     var lastVerifiedAt: Date?
     var activeSetupProbeID: UUID?
     var activeSetupShortcutName: String?
     var activeSetupLaunchAccepted = false
-    var selectedFontName: String = "Dancing Script"
+    var selectedFontName: String = availableHandwritingFonts[0].fontName
     var recentHistoryLimit: Int = 12
     var maximumStoredTurns: Int = 100
 
@@ -106,5 +123,30 @@ nonisolated struct AppSettings: Equatable {
             userDefaults.removeObject(forKey: PersistenceKey.activeSetupShortcutName)
             userDefaults.removeObject(forKey: PersistenceKey.activeSetupLaunchAccepted)
         }
+    }
+
+    static func registerBundledHandwritingFonts(in bundle: Bundle = .main) {
+        for handwritingFont in availableHandwritingFonts {
+            guard let fontURL = fontURL(for: handwritingFont.resourceName, in: bundle) else {
+                continue
+            }
+
+            CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+        }
+    }
+
+    private static func fontURL(for resourceName: String, in bundle: Bundle) -> URL? {
+        let resource = resourceName as NSString
+        let name = resource.deletingPathExtension
+        let pathExtension = resource.pathExtension
+
+        return bundle.url(
+            forResource: name,
+            withExtension: pathExtension,
+            subdirectory: "Resources/Fonts"
+        ) ?? bundle.url(
+            forResource: name,
+            withExtension: pathExtension
+        )
     }
 }

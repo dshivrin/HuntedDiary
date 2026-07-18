@@ -13,9 +13,7 @@ final class DependencyContainer: ObservableObject {
     }
     private let settingsDefaults: UserDefaults
     let historyStore: PlainTextHistoryStore
-    let apiKeyStore: APIKeyStore
     let appleVisionRecognizer: AppleVisionRecognizer
-    let openAIClient: OpenAIClient
     let pendingDiaryReplyStore: PendingDiaryReplyStore
     let shortcutReplyLauncher: any ShortcutReplyLaunching
     let diaryReplyFlow: DiaryReplyFlow
@@ -30,19 +28,19 @@ final class DependencyContainer: ObservableObject {
         settings: AppSettings? = nil,
         settingsDefaults: UserDefaults = .standard,
         historyStore: PlainTextHistoryStore? = nil,
-        apiKeyStore: APIKeyStore? = nil,
         appleVisionRecognizer: AppleVisionRecognizer? = nil,
-        openAIClient: OpenAIClient? = nil,
         pendingDiaryReplyStore: PendingDiaryReplyStore? = nil,
         shortcutReplyLauncher: (any ShortcutReplyLaunching)? = nil,
-        diaryReplyFlow: DiaryReplyFlow? = nil
+        diaryReplyFlow: DiaryReplyFlow? = nil,
+        legacyCredentialMigration: LegacyCredentialMigration? = nil
     ) {
         self.settingsDefaults = settingsDefaults
         self.settings = settings ?? AppSettings(userDefaults: settingsDefaults)
         self.historyStore = historyStore ?? PlainTextHistoryStore()
-        self.apiKeyStore = apiKeyStore ?? APIKeyStore()
         self.appleVisionRecognizer = appleVisionRecognizer ?? AppleVisionRecognizer()
-        self.openAIClient = openAIClient ?? OpenAIClient()
+        try? (legacyCredentialMigration ?? LegacyCredentialMigration(
+            userDefaults: settingsDefaults
+        )).runIfNeeded()
         let store: PendingDiaryReplyStore
         if let pendingDiaryReplyStore {
             store = pendingDiaryReplyStore
