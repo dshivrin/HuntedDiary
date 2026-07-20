@@ -1,0 +1,1048 @@
+# Review package: f65eb0719c22d31fbd8c9751c0aff8b8224a38a6..052edef19c95e15e87e29ec3a1a234c07eaf0c0a
+
+## Commits
+052edef Use local recognition for automatic diary submissions
+
+## Files changed
+ TheHuntedDiary/App/DependencyContainer.swift       |   3 -
+ TheHuntedDiary/Diary/DiaryPageView.swift           | 120 +++++++-
+ TheHuntedDiary/Diary/DiaryTurnController.swift     | 288 ++++++++++++++++++-
+ .../Recognition/AppleVisionRecognizer.swift        |  84 +++++-
+ .../Recognition/OpenAIImageRecognizer.swift        |   7 -
+ TheHuntedDiary/Recognition/RecognitionResult.swift |   1 +
+ .../Diary/DiaryIdleSubmissionTask2Tests.swift      | 320 +++++++++++++++++++++
+ .../PencilCanvasIdleCancellationTask2Tests.swift   |  82 ++++++
+ .../Recognition/LocalRecognitionTask2Tests.swift   |  22 ++
+ 9 files changed, 911 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/TheHuntedDiary/App/DependencyContainer.swift b/TheHuntedDiary/App/DependencyContainer.swift
+index 368c952..cea103d 100644
+--- a/TheHuntedDiary/App/DependencyContainer.swift
++++ b/TheHuntedDiary/App/DependencyContainer.swift
+@@ -1,28 +1,25 @@
+ import Combine
+ import Foundation
+ 
+ @MainActor
+ final class DependencyContainer: ObservableObject {
+     @Published var settings: AppSettings
+     let historyStore: PlainTextHistoryStore
+     let apiKeyStore: APIKeyStore
+     let appleVisionRecognizer: AppleVisionRecognizer
+-    let openAIImageRecognizer: OpenAIImageRecognizer
+     let openAIClient: OpenAIClient
+ 
+     init(
+         settings: AppSettings? = nil,
+         historyStore: PlainTextHistoryStore? = nil,
+         apiKeyStore: APIKeyStore? = nil,
+         appleVisionRecognizer: AppleVisionRecognizer? = nil,
+-        openAIImageRecognizer: OpenAIImageRecognizer? = nil,
+         openAIClient: OpenAIClient? = nil
+     ) {
+         self.settings = settings ?? AppSettings()
+         self.historyStore = historyStore ?? PlainTextHistoryStore()
+         self.apiKeyStore = apiKeyStore ?? APIKeyStore()
+         self.appleVisionRecognizer = appleVisionRecognizer ?? AppleVisionRecognizer()
+-        self.openAIImageRecognizer = openAIImageRecognizer ?? OpenAIImageRecognizer()
+         self.openAIClient = openAIClient ?? OpenAIClient()
+     }
+ }
+diff --git a/TheHuntedDiary/Diary/DiaryPageView.swift b/TheHuntedDiary/Diary/DiaryPageView.swift
+index 5616934..96da5d1 100644
+--- a/TheHuntedDiary/Diary/DiaryPageView.swift
++++ b/TheHuntedDiary/Diary/DiaryPageView.swift
+@@ -1,11 +1,123 @@
+ import SwiftUI
+ 
+ struct DiaryPageView: View {
++    @ObservedObject private var controller: DiaryTurnController
++    private let replyFontName: String
++    private let onRequestSettings: () -> Void
++
++    init(
++        controller: DiaryTurnController,
++        replyFontName: String,
++        onRequestSettings: @escaping () -> Void = {}
++    ) {
++        self.controller = controller
++        self.replyFontName = replyFontName
++        self.onRequestSettings = onRequestSettings
++    }
++
+     var body: some View {
+-        ZStack {
+-            Color(.systemBackground)
+-            DiaryCanvasView()
+-            ReplyTextView(text: "")
++        GeometryReader { proxy in
++            ZStack(alignment: .bottom) {
++                Color(.systemBackground)
++                DiaryCanvasView(
++                    isRecognitionRunning: controller.isBusy,
++                    onIdleCommit: Self.idleSubmissionRoute(
++                        controller: controller,
++                        canvasSize: proxy.size
++                    ).handler
++                )
++                ReplyTextView(text: controller.replyText, fontName: replyFontName)
++
++                if let recovery = controller.activeRecovery {
++                    RecoveryBanner(
++                        recovery: recovery,
++                        onRetry: {
++                            Task {
++                                await controller.retry()
++                            }
++                        },
++                        onOpenSettings: onRequestSettings
++                    )
++                    .padding(.bottom, 24)
++                }
++            }
++        }
++        .onChange(of: controller.shouldPresentSettings) { _, shouldPresentSettings in
++            if shouldPresentSettings {
++                onRequestSettings()
++            }
++        }
++    }
++
++    static func idleSubmissionRoute(
++        controller: DiaryTurnController,
++        canvasSize: CGSize
++    ) -> DiaryPageIdleSubmissionRoute {
++        DiaryPageIdleSubmissionRoute(controller: controller, canvasSize: canvasSize)
++    }
++}
++
++@MainActor
++struct DiaryPageIdleSubmissionRoute {
++    let handler: PencilCanvasIdleCommitHandler
++
++    init(controller: DiaryTurnController, canvasSize: CGSize) {
++        handler = { model in
++            controller.submit(model: model, canvasSize: canvasSize)
++        }
++    }
++
++    func drawingDidChange(
++        _ model: PencilCanvasModel,
++        using committer: PencilCanvasIdleCommitter
++    ) {
++        committer.drawingDidChange {
++            handler(model)
++        }
++    }
++}
++
++private struct RecoveryBanner: View {
++    let recovery: AppErrorRecovery
++    let onRetry: () -> Void
++    let onOpenSettings: () -> Void
++
++    var body: some View {
++        VStack(spacing: 12) {
++            Text(recovery.message)
++                .font(recovery.action == .none ? .footnote : .callout)
++                .foregroundStyle(recovery.action == .none ? .secondary : .primary)
++                .multilineTextAlignment(.center)
++
++            if let actionTitle = recovery.actionTitle {
++                Button(actionTitle) {
++                    performAction()
++                }
++                .buttonStyle(.borderedProminent)
++            }
++        }
++        .padding(.horizontal, 24)
++    }
++
++    private func performAction() {
++        switch recovery.action {
++        case .none:
++            break
++        case .openSettings:
++            onOpenSettings()
++        case .retryDrawing, .retryReply:
++            onRetry()
++        }
++    }
++}
++
++private extension DiaryTurnController {
++    var isBusy: Bool {
++        switch phase {
++        case .recognizing, .sending, .streamingReply:
++            return true
++        case .listening, .completed, .failed:
++            return false
+         }
+     }
+ }
+diff --git a/TheHuntedDiary/Diary/DiaryTurnController.swift b/TheHuntedDiary/Diary/DiaryTurnController.swift
+index 2193725..4a096b8 100644
+--- a/TheHuntedDiary/Diary/DiaryTurnController.swift
++++ b/TheHuntedDiary/Diary/DiaryTurnController.swift
+@@ -1,5 +1,291 @@
++import Combine
+ import Foundation
++import UIKit
++
++struct DiaryTurnFailure: Equatable {
++    enum Stage: Equatable {
++        case apiKey
++        case canvasExport
++        case recognition
++        case openAI
++    }
++
++    var stage: Stage
++    var error: AppError
++}
++
++enum DiaryTurnPhase: Equatable {
++    case listening
++    case recognizing
++    case sending
++    case streamingReply
++    case completed
++    case failed(DiaryTurnFailure)
++}
+ 
+ @MainActor
+-final class DiaryTurnController {
++final class DiaryTurnController: ObservableObject {
++    typealias SettingsProvider = @MainActor () -> AppSettings
++
++    @Published private(set) var phase: DiaryTurnPhase = .listening
++    @Published private(set) var recognizedText = ""
++    @Published private(set) var replyText = ""
++    @Published private(set) var shouldPresentSettings = false
++    @Published private(set) var historyWriteError: AppError?
++
++    private let settingsProvider: SettingsProvider
++    private let apiKeyStore: any APIKeyLoading
++    private let historyStore: any DiaryHistoryStoring
++    private let recognizer: any HandwritingRecognizer
++    private let openAIClient: any OpenAIReplyStreaming
++    private let promptBuilder: DiaryPromptBuilder
++
++    private var retainedImage: UIImage?
++    private var retainedRecognition: RecognitionResult?
++    private var activeTask: Task<Void, Never>?
++    private var activeTurnID: UUID?
++
++    init(
++        settingsProvider: @escaping SettingsProvider,
++        apiKeyStore: any APIKeyLoading,
++        historyStore: any DiaryHistoryStoring,
++        recognizer: any HandwritingRecognizer,
++        openAIClient: any OpenAIReplyStreaming,
++        promptBuilder: DiaryPromptBuilder = DiaryPromptBuilder()
++    ) {
++        self.settingsProvider = settingsProvider
++        self.apiKeyStore = apiKeyStore
++        self.historyStore = historyStore
++        self.recognizer = recognizer
++        self.openAIClient = openAIClient
++        self.promptBuilder = promptBuilder
++    }
++
++    convenience init(dependencies: DependencyContainer) {
++        self.init(
++            settingsProvider: { dependencies.settings },
++            apiKeyStore: dependencies.apiKeyStore,
++            historyStore: dependencies.historyStore,
++            recognizer: dependencies.appleVisionRecognizer,
++            openAIClient: dependencies.openAIClient
++        )
++    }
++
++    var canRetry: Bool {
++        switch phase {
++        case let .failed(failure):
++            return failure.stage != .apiKey
++        case .listening, .recognizing, .sending, .streamingReply, .completed:
++            return false
++        }
++    }
++
++    var activeRecovery: AppErrorRecovery? {
++        if let historyWriteError {
++            return historyWriteError.recovery
++        }
++
++        guard case let .failed(failure) = phase else {
++            return nil
++        }
++
++        return failure.error.recovery
++    }
++
++    func submit(model: PencilCanvasModel, canvasSize: CGSize) {
++        let image = model.exportImage(canvasSize: canvasSize)
++        activeTask?.cancel()
++        guard let turnID = prepareTurn(image: image), let image else {
++            activeTask = nil
++            return
++        }
++        activeTask = Task { [weak self] in
++            await self?.runStartingWithRecognition(image: image, turnID: turnID)
++        }
++    }
++
++    func submit(image: UIImage?) async {
++        activeTask?.cancel()
++        activeTask = nil
++        guard let turnID = prepareTurn(image: image), let image else {
++            return
++        }
++        await runStartingWithRecognition(image: image, turnID: turnID)
++    }
++
++    func retry() async {
++        guard case let .failed(failure) = phase, let turnID = activeTurnID else {
++            return
++        }
++
++        switch failure.stage {
++        case .recognition, .canvasExport:
++            guard let retainedImage else {
++                fail(stage: .canvasExport, error: .emptyDrawing)
++                return
++            }
++            await runStartingWithRecognition(image: retainedImage, turnID: turnID)
++        case .openAI:
++            guard let retainedRecognition else {
++                guard let retainedImage else {
++                    fail(stage: .canvasExport, error: .emptyDrawing)
++                    return
++                }
++                await runStartingWithRecognition(image: retainedImage, turnID: turnID)
++                return
++            }
++            await runReply(for: retainedRecognition, turnID: turnID)
++        case .apiKey:
++            shouldPresentSettings = true
++        }
++    }
++}
++
++private extension DiaryTurnController {
++    func prepareTurn(image: UIImage?) -> UUID? {
++        activeTurnID = nil
++        resetTurnState()
++
++        guard let image else {
++            fail(stage: .canvasExport, error: .emptyDrawing)
++            return nil
++        }
++
++        let turnID = UUID()
++        activeTurnID = turnID
++        retainedImage = image
++        return turnID
++    }
++
++    func resetTurnState() {
++        phase = .listening
++        recognizedText = ""
++        replyText = ""
++        shouldPresentSettings = false
++        historyWriteError = nil
++        retainedImage = nil
++        retainedRecognition = nil
++    }
++
++    func runStartingWithRecognition(image: UIImage, turnID: UUID) async {
++        guard isCurrentTurn(turnID) else {
++            return
++        }
++
++        guard loadedAPIKey() != nil else {
++            shouldPresentSettings = true
++            fail(stage: .apiKey, error: .missingAPIKey)
++            return
++        }
++
++        do {
++            phase = .recognizing
++            let recognition = try await recognizer.recognize(image: image)
++            guard isCurrentTurn(turnID) else {
++                return
++            }
++            let trimmedText = recognition.text.trimmingCharacters(in: .whitespacesAndNewlines)
++
++            guard trimmedText.isEmpty == false else {
++                fail(stage: .recognition, error: .emptyRecognitionResult)
++                return
++            }
++
++            let normalizedRecognition = RecognitionResult(
++                text: trimmedText,
++                confidence: recognition.confidence,
++                source: recognition.source
++            )
++            retainedRecognition = normalizedRecognition
++            recognizedText = trimmedText
++            await runReply(for: normalizedRecognition, turnID: turnID)
++        } catch {
++            if isCurrentTurn(turnID) {
++                fail(stage: .recognition, error: .recognitionFailed)
++            }
++        }
++    }
++
++    func runReply(for recognition: RecognitionResult, turnID: UUID) async {
++        guard isCurrentTurn(turnID) else {
++            return
++        }
++
++        guard let apiKey = loadedAPIKey() else {
++            shouldPresentSettings = true
++            fail(stage: .apiKey, error: .missingAPIKey)
++            return
++        }
++
++        let settings = settingsProvider()
++
++        do {
++            phase = .sending
++            let recentTurns = try historyStore.loadRecent(limit: settings.recentHistoryLimit)
++            let prompt = promptBuilder.buildPrompt(
++                recentTurns: recentTurns,
++                currentUserText: recognition.text,
++                settings: settings
++            )
++
++            replyText = ""
++            phase = .streamingReply
++            for try await delta in openAIClient.replyStream(
++                apiKey: apiKey,
++                prompt: prompt,
++                settings: settings
++            ) {
++                guard isCurrentTurn(turnID) else {
++                    return
++                }
++                replyText += delta
++            }
++
++            guard isCurrentTurn(turnID) else {
++                return
++            }
++            appendHistory(for: recognition, settings: settings)
++            phase = .completed
++        } catch {
++            if isCurrentTurn(turnID) {
++                fail(stage: .openAI, error: .openAIReplyFailed)
++            }
++        }
++    }
++
++    func isCurrentTurn(_ turnID: UUID) -> Bool {
++        activeTurnID == turnID && Task.isCancelled == false
++    }
++
++    func appendHistory(for recognition: RecognitionResult, settings: AppSettings) {
++        do {
++            let turn = ConversationTurn(
++                recognitionSource: recognition.source,
++                model: settings.replyModel,
++                openAIStoreEnabled: settings.openAIStoreEnabled,
++                userText: recognition.text,
++                assistantText: replyText
++            )
++            try historyStore.append(turn)
++            try historyStore.pruneOldestTurns(keepingMaximum: settings.maximumStoredTurns)
++        } catch {
++            historyWriteError = .historyWriteFailed
++        }
++    }
++
++    func loadedAPIKey() -> String? {
++        do {
++            let apiKey = try apiKeyStore.load()?.trimmingCharacters(in: .whitespacesAndNewlines)
++            guard let apiKey, apiKey.isEmpty == false else {
++                return nil
++            }
++            return apiKey
++        } catch {
++            return nil
++        }
++    }
++
++    func fail(stage: DiaryTurnFailure.Stage, error: AppError) {
++        phase = .failed(DiaryTurnFailure(stage: stage, error: error))
++    }
+ }
+diff --git a/TheHuntedDiary/Recognition/AppleVisionRecognizer.swift b/TheHuntedDiary/Recognition/AppleVisionRecognizer.swift
+index e281ac8..7298d03 100644
+--- a/TheHuntedDiary/Recognition/AppleVisionRecognizer.swift
++++ b/TheHuntedDiary/Recognition/AppleVisionRecognizer.swift
+@@ -1,7 +1,89 @@
++import ImageIO
+ import UIKit
++@preconcurrency import Vision
+ 
+ struct AppleVisionRecognizer: HandwritingRecognizer {
++    struct RecognizedLine: Equatable {
++        var text: String
++        var confidence: Double
++    }
++
+     func recognize(image: UIImage) async throws -> RecognitionResult {
+-        RecognitionResult(text: "", confidence: nil, source: .appleVision)
++        guard let cgImage = image.cgImage else {
++            return RecognitionResult(text: "", confidence: nil, source: .appleVision)
++        }
++
++        return try await withCheckedThrowingContinuation { continuation in
++            let request = VNRecognizeTextRequest { request, error in
++                if let error {
++                    continuation.resume(throwing: error)
++                    return
++                }
++
++                let observations = request.results as? [VNRecognizedTextObservation] ?? []
++                let lines = observations.compactMap { observation -> RecognizedLine? in
++                    guard let candidate = observation.topCandidates(1).first else {
++                        return nil
++                    }
++
++                    return RecognizedLine(
++                        text: candidate.string,
++                        confidence: Double(candidate.confidence)
++                    )
++                }
++
++                continuation.resume(returning: Self.result(from: lines))
++            }
++            request.recognitionLevel = .accurate
++            request.recognitionLanguages = ["en-US"]
++            request.usesLanguageCorrection = true
++
++            let handler = VNImageRequestHandler(
++                cgImage: cgImage,
++                orientation: CGImagePropertyOrientation(image.imageOrientation),
++                options: [:]
++            )
++
++            DispatchQueue.global(qos: .userInitiated).async {
++                do {
++                    try handler.perform([request])
++                } catch {
++                    continuation.resume(throwing: error)
++                }
++            }
++        }
++    }
++
++    static func result(from lines: [RecognizedLine]) -> RecognitionResult {
++        RecognitionResult(
++            text: lines.map(\.text).joined(separator: "\n"),
++            confidence: lines.map(\.confidence).min(),
++            source: .appleVision
++        )
++    }
++}
++
++private extension CGImagePropertyOrientation {
++    init(_ imageOrientation: UIImage.Orientation) {
++        switch imageOrientation {
++        case .up:
++            self = .up
++        case .upMirrored:
++            self = .upMirrored
++        case .down:
++            self = .down
++        case .downMirrored:
++            self = .downMirrored
++        case .left:
++            self = .left
++        case .leftMirrored:
++            self = .leftMirrored
++        case .right:
++            self = .right
++        case .rightMirrored:
++            self = .rightMirrored
++        @unknown default:
++            self = .up
++        }
+     }
+ }
+diff --git a/TheHuntedDiary/Recognition/OpenAIImageRecognizer.swift b/TheHuntedDiary/Recognition/OpenAIImageRecognizer.swift
+deleted file mode 100644
+index 8fa2410..0000000
+--- a/TheHuntedDiary/Recognition/OpenAIImageRecognizer.swift
++++ /dev/null
+@@ -1,7 +0,0 @@
+-import UIKit
+-
+-struct OpenAIImageRecognizer: HandwritingRecognizer {
+-    func recognize(image: UIImage) async throws -> RecognitionResult {
+-        RecognitionResult(text: "", confidence: nil, source: .openAI)
+-    }
+-}
+diff --git a/TheHuntedDiary/Recognition/RecognitionResult.swift b/TheHuntedDiary/Recognition/RecognitionResult.swift
+index 204e7b4..3767c0a 100644
+--- a/TheHuntedDiary/Recognition/RecognitionResult.swift
++++ b/TheHuntedDiary/Recognition/RecognitionResult.swift
+@@ -1,12 +1,13 @@
+ import Foundation
+ 
+ struct RecognitionResult: Equatable {
+     enum Source: String, Equatable {
+         case appleVision
++        // Retained only so existing on-disk history can still be decoded.
+         case openAI
+     }
+ 
+     var text: String
+     var confidence: Double?
+     var source: Source
+ }
+diff --git a/TheHuntedDiaryTests/Diary/DiaryIdleSubmissionTask2Tests.swift b/TheHuntedDiaryTests/Diary/DiaryIdleSubmissionTask2Tests.swift
+new file mode 100644
+index 0000000..ce13c74
+--- /dev/null
++++ b/TheHuntedDiaryTests/Diary/DiaryIdleSubmissionTask2Tests.swift
+@@ -0,0 +1,320 @@
++import PencilKit
++import Testing
++import UIKit
++@testable import TheHuntedDiary
++
++@MainActor
++struct DiaryIdleSubmissionTask2Tests {
++    @Test func idleCommitRoutesToSubmitAndPreservesMountedCanvasModel() async throws {
++        let recognizer = IdleSubmissionRecognizer()
++        let replyClient = IdleSubmissionReplyClient()
++        let historyStore = IdleSubmissionHistoryStore()
++        let controller = DiaryTurnController(
++            settingsProvider: { AppSettings() },
++            apiKeyStore: IdleSubmissionAPIKeyStore(),
++            historyStore: historyStore,
++            recognizer: recognizer,
++            openAIClient: replyClient
++        )
++        let model = PencilCanvasModel(drawing: Self.makeDrawing())
++        let originalDrawing = model.drawing.dataRepresentation()
++        let clock = IdleSubmissionClock()
++        let committer = PencilCanvasIdleCommitter(
++            delay: .milliseconds(2500),
++            clock: clock
++        )
++        let route = DiaryPageView.idleSubmissionRoute(
++            controller: controller,
++            canvasSize: CGSize(width: 500, height: 700)
++        )
++
++        route.drawingDidChange(model, using: committer)
++        await clock.waitForSleepers(count: 1)
++        await clock.advance(by: .milliseconds(2499))
++        for _ in 0 ..< 100 {
++            await Task.yield()
++        }
++
++        #expect(recognizer.callCount == 0)
++        #expect(replyClient.callCount == 0)
++        #expect(model.drawing.dataRepresentation() == originalDrawing)
++
++        await clock.advance(by: .milliseconds(1))
++        try await Self.waitUntil { controller.phase == .completed }
++
++        #expect(recognizer.callCount == 1)
++        #expect(replyClient.callCount == 1)
++        #expect(historyStore.appendedTurns.count == 1)
++        #expect(model.drawing.dataRepresentation() == originalDrawing)
++    }
++
++    @Test func emptyLocalRecognitionStopsWithoutNetworkFallback() async {
++        let recognizer = IdleSubmissionRecognizer(text: "   ", confidence: nil)
++        let replyClient = IdleSubmissionReplyClient()
++        let controller = DiaryTurnController(
++            settingsProvider: { AppSettings() },
++            apiKeyStore: IdleSubmissionAPIKeyStore(),
++            historyStore: IdleSubmissionHistoryStore(),
++            recognizer: recognizer,
++            openAIClient: replyClient
++        )
++
++        await controller.submit(image: Self.makeImage())
++
++        #expect(controller.phase == .failed(DiaryTurnFailure(stage: .recognition, error: .emptyRecognitionResult)))
++        #expect(recognizer.callCount == 1)
++        #expect(replyClient.callCount == 0)
++    }
++
++    @Test func lowConfidenceLocalRecognitionDoesNotUseImageFallback() async {
++        let recognizer = IdleSubmissionRecognizer(text: "Faint but usable.", confidence: 0.12)
++        let replyClient = IdleSubmissionReplyClient()
++        let historyStore = IdleSubmissionHistoryStore()
++        let controller = DiaryTurnController(
++            settingsProvider: { AppSettings() },
++            apiKeyStore: IdleSubmissionAPIKeyStore(),
++            historyStore: historyStore,
++            recognizer: recognizer,
++            openAIClient: replyClient
++        )
++
++        await controller.submit(image: Self.makeImage())
++
++        #expect(controller.phase == .completed)
++        #expect(recognizer.callCount == 1)
++        #expect(historyStore.appendedTurns.first?.recognitionSource == .appleVision)
++    }
++
++    @Test func automaticSubmissionDoesNotCancelItsOwnRecognitionTask() async throws {
++        let recognizer = CancellationAwareIdleSubmissionRecognizer()
++        let controller = DiaryTurnController(
++            settingsProvider: { AppSettings() },
++            apiKeyStore: IdleSubmissionAPIKeyStore(),
++            historyStore: IdleSubmissionHistoryStore(),
++            recognizer: recognizer,
++            openAIClient: IdleSubmissionReplyClient()
++        )
++        let model = PencilCanvasModel(drawing: Self.makeDrawing())
++
++        DiaryPageView.idleSubmissionRoute(
++            controller: controller,
++            canvasSize: CGSize(width: 500, height: 700)
++        ).handler(model)
++        try await Self.waitUntil {
++            controller.phase == .completed || controller.activeRecovery != nil
++        }
++
++        #expect(controller.phase == .completed)
++        #expect(recognizer.observedCancellation == false)
++    }
++
++    @Test func staleRecognitionCompletionCannotOverwriteNewerTurn() async throws {
++        let recognizer = SuspendingIdleSubmissionRecognizer()
++        let historyStore = IdleSubmissionHistoryStore()
++        let controller = DiaryTurnController(
++            settingsProvider: { AppSettings() },
++            apiKeyStore: IdleSubmissionAPIKeyStore(),
++            historyStore: historyStore,
++            recognizer: recognizer,
++            openAIClient: IdleSubmissionReplyClient()
++        )
++        let model = PencilCanvasModel(drawing: Self.makeDrawing())
++        let idleCommit = DiaryPageView.idleSubmissionRoute(
++            controller: controller,
++            canvasSize: CGSize(width: 500, height: 700)
++        ).handler
++
++        idleCommit(model)
++        try await Self.waitUntil { recognizer.hasSuspendedFirstCall }
++
++        idleCommit(model)
++        try await Self.waitUntil { controller.phase == .completed }
++        #expect(controller.recognizedText == "Newest local ink.")
++
++        recognizer.resumeFirstCall()
++        for _ in 0 ..< 100 {
++            await Task.yield()
++        }
++
++        #expect(controller.recognizedText == "Newest local ink.")
++        #expect(historyStore.appendedTurns.map(\.userText) == ["Newest local ink."])
++    }
++
++    private static func waitUntil(
++        timeout: Duration = .seconds(2),
++        condition: @escaping @MainActor () -> Bool
++    ) async throws {
++        let clock = ContinuousClock()
++        let deadline = clock.now.advanced(by: timeout)
++        while condition() == false {
++            guard clock.now < deadline else {
++                throw IdleSubmissionTestError.timeout
++            }
++            await Task.yield()
++        }
++    }
++
++    private static func makeDrawing() -> PKDrawing {
++        let points = [
++            PKStrokePoint(
++                location: CGPoint(x: 100, y: 100),
++                timeOffset: 0,
++                size: CGSize(width: 8, height: 8),
++                opacity: 1,
++                force: 1,
++                azimuth: 0,
++                altitude: .pi / 2
++            ),
++            PKStrokePoint(
++                location: CGPoint(x: 220, y: 160),
++                timeOffset: 0.2,
++                size: CGSize(width: 8, height: 8),
++                opacity: 1,
++                force: 1,
++                azimuth: 0,
++                altitude: .pi / 2
++            ),
++        ]
++        let path = PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
++        return PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
++    }
++
++    private static func makeImage() -> UIImage {
++        UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
++            UIColor.black.setFill()
++            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
++        }
++    }
++}
++
++private final class IdleSubmissionRecognizer: HandwritingRecognizer {
++    private let text: String
++    private let confidence: Double?
++    private(set) var callCount = 0
++
++    init(text: String = "The local ink.", confidence: Double? = 0.42) {
++        self.text = text
++        self.confidence = confidence
++    }
++
++    func recognize(image _: UIImage) async throws -> RecognitionResult {
++        callCount += 1
++        return RecognitionResult(text: text, confidence: confidence, source: .appleVision)
++    }
++}
++
++private final class CancellationAwareIdleSubmissionRecognizer: HandwritingRecognizer {
++    private(set) var observedCancellation = false
++
++    func recognize(image _: UIImage) async throws -> RecognitionResult {
++        observedCancellation = Task.isCancelled
++        try Task.checkCancellation()
++        return RecognitionResult(text: "Cancellation-free ink.", confidence: 0.9, source: .appleVision)
++    }
++}
++
++private final class SuspendingIdleSubmissionRecognizer: HandwritingRecognizer {
++    private(set) var hasSuspendedFirstCall = false
++    private var callCount = 0
++    private var firstContinuation: CheckedContinuation<RecognitionResult, Never>?
++
++    func recognize(image _: UIImage) async throws -> RecognitionResult {
++        callCount += 1
++        if callCount == 1 {
++            hasSuspendedFirstCall = true
++            return await withCheckedContinuation { continuation in
++                firstContinuation = continuation
++            }
++        }
++
++        return RecognitionResult(text: "Newest local ink.", confidence: 0.9, source: .appleVision)
++    }
++
++    func resumeFirstCall() {
++        firstContinuation?.resume(
++            returning: RecognitionResult(text: "Stale local ink.", confidence: 0.9, source: .appleVision)
++        )
++        firstContinuation = nil
++    }
++}
++
++private final class IdleSubmissionReplyClient: OpenAIReplyStreaming {
++    private(set) var callCount = 0
++
++    func replyStream(
++        apiKey _: String,
++        prompt _: DiaryPromptBuilder.Prompt,
++        settings _: AppSettings
++    ) -> AsyncThrowingStream<String, Error> {
++        callCount += 1
++        return AsyncThrowingStream { continuation in
++            continuation.yield("The reply.")
++            continuation.finish()
++        }
++    }
++}
++
++private final class IdleSubmissionHistoryStore: DiaryHistoryStoring {
++    private(set) var appendedTurns: [ConversationTurn] = []
++
++    func loadRecent(limit _: Int) throws -> [ConversationTurn] { [] }
++    func append(_ turn: ConversationTurn) throws { appendedTurns.append(turn) }
++    func pruneOldestTurns(keepingMaximum _: Int) throws {}
++}
++
++private struct IdleSubmissionAPIKeyStore: APIKeyLoading {
++    func load() throws -> String? { "sk-test" }
++}
++
++private enum IdleSubmissionTestError: Error {
++    case timeout
++}
++
++private actor IdleSubmissionClock: PencilCanvasClock {
++    private struct Sleeper {
++        let deadline: Duration
++        let continuation: CheckedContinuation<Void, Error>
++    }
++
++    private var elapsed: Duration = .zero
++    private var sleepers: [Sleeper] = []
++    private var sleeperWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
++
++    nonisolated func sleep(for duration: Duration) async throws {
++        try await isolatedSleep(for: duration)
++    }
++
++    private func isolatedSleep(for duration: Duration) async throws {
++        try await withCheckedThrowingContinuation { continuation in
++            sleepers.append(Sleeper(deadline: elapsed + duration, continuation: continuation))
++            resumeReadySleeperWaiters()
++        }
++    }
++
++    func advance(by duration: Duration) {
++        elapsed += duration
++        let ready = sleepers.filter { $0.deadline <= elapsed }
++        sleepers.removeAll { $0.deadline <= elapsed }
++        for sleeper in ready {
++            sleeper.continuation.resume()
++        }
++    }
++
++    func waitForSleepers(count: Int) async {
++        if sleepers.count >= count {
++            return
++        }
++
++        await withCheckedContinuation { continuation in
++            sleeperWaiters.append((count: count, continuation: continuation))
++        }
++    }
++
++    private func resumeReadySleeperWaiters() {
++        let ready = sleeperWaiters.filter { sleepers.count >= $0.count }
++        sleeperWaiters.removeAll { sleepers.count >= $0.count }
++        for waiter in ready {
++            waiter.continuation.resume()
++        }
++    }
++}
+diff --git a/TheHuntedDiaryTests/Diary/PencilCanvasIdleCancellationTask2Tests.swift b/TheHuntedDiaryTests/Diary/PencilCanvasIdleCancellationTask2Tests.swift
+new file mode 100644
+index 0000000..f6a6d16
+--- /dev/null
++++ b/TheHuntedDiaryTests/Diary/PencilCanvasIdleCancellationTask2Tests.swift
+@@ -0,0 +1,82 @@
++import Testing
++@testable import TheHuntedDiary
++
++@MainActor
++struct PencilCanvasIdleCancellationTask2Tests {
++    @Test func newStrokeCancelsEarlierIdleCommit() async {
++        let clock = IdleCancellationClock()
++        let committer = PencilCanvasIdleCommitter(
++            delay: .milliseconds(2500),
++            clock: clock
++        )
++        var firstCommitCount = 0
++        var latestCommitCount = 0
++
++        committer.drawingDidChange {
++            firstCommitCount += 1
++        }
++        await clock.waitForSleepers(count: 1)
++
++        committer.drawingDidChange {
++            latestCommitCount += 1
++        }
++        await clock.waitForSleepers(count: 2)
++
++        await clock.advance(by: .milliseconds(2500))
++        for _ in 0 ..< 100 where latestCommitCount == 0 {
++            await Task.yield()
++        }
++
++        #expect(firstCommitCount == 0)
++        #expect(latestCommitCount == 1)
++    }
++}
++
++private actor IdleCancellationClock: PencilCanvasClock {
++    private struct Sleeper {
++        let deadline: Duration
++        let continuation: CheckedContinuation<Void, Error>
++    }
++
++    private var elapsed: Duration = .zero
++    private var sleepers: [Sleeper] = []
++    private var sleeperWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
++
++    nonisolated func sleep(for duration: Duration) async throws {
++        try await isolatedSleep(for: duration)
++    }
++
++    private func isolatedSleep(for duration: Duration) async throws {
++        try await withCheckedThrowingContinuation { continuation in
++            sleepers.append(Sleeper(deadline: elapsed + duration, continuation: continuation))
++            resumeReadySleeperWaiters()
++        }
++    }
++
++    func advance(by duration: Duration) {
++        elapsed += duration
++        let ready = sleepers.filter { $0.deadline <= elapsed }
++        sleepers.removeAll { $0.deadline <= elapsed }
++        for sleeper in ready {
++            sleeper.continuation.resume()
++        }
++    }
++
++    func waitForSleepers(count: Int) async {
++        if sleepers.count >= count {
++            return
++        }
++
++        await withCheckedContinuation { continuation in
++            sleeperWaiters.append((count: count, continuation: continuation))
++        }
++    }
++
++    private func resumeReadySleeperWaiters() {
++        let ready = sleeperWaiters.filter { sleepers.count >= $0.count }
++        sleeperWaiters.removeAll { sleepers.count >= $0.count }
++        for waiter in ready {
++            waiter.continuation.resume()
++        }
++    }
++}
+diff --git a/TheHuntedDiaryTests/Recognition/LocalRecognitionTask2Tests.swift b/TheHuntedDiaryTests/Recognition/LocalRecognitionTask2Tests.swift
+new file mode 100644
+index 0000000..00c7afc
+--- /dev/null
++++ b/TheHuntedDiaryTests/Recognition/LocalRecognitionTask2Tests.swift
+@@ -0,0 +1,22 @@
++import Testing
++@testable import TheHuntedDiary
++
++struct LocalRecognitionTask2Tests {
++    @Test func emptyVisionResultStaysLocal() {
++        let result = AppleVisionRecognizer.result(from: [])
++
++        #expect(result.text.isEmpty)
++        #expect(result.confidence == nil)
++        #expect(result.source == .appleVision)
++    }
++
++    @Test func lowConfidenceVisionResultStaysLocal() {
++        let result = AppleVisionRecognizer.result(
++            from: [AppleVisionRecognizer.RecognizedLine(text: "Faint ink", confidence: 0.12)]
++        )
++
++        #expect(result.text == "Faint ink")
++        #expect(result.confidence == 0.12)
++        #expect(result.source == .appleVision)
++    }
++}
