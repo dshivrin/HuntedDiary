@@ -1,0 +1,359 @@
+# Review package: f7316f316d3a218f18a808c18f5265e1b842e845..f65eb0719c22d31fbd8c9751c0aff8b8224a38a6
+
+## Commits
+f65eb07 Raise deployment target to iOS 26
+
+## Files changed
+ TheHuntedDiary.xcodeproj/project.pbxproj           | 16 +++----
+ scripts/assert-ios-26-deployment-targets.sh        | 54 ++++++++++++++++++++++
+ .../assert-ios-26-deployment-targets-tests.sh      | 37 +++++++++++++++
+ .../fixtures/conditional-obsolete-override.pbxproj |  9 ++++
+ scripts/tests/fixtures/exactly-eight.pbxproj       |  8 ++++
+ scripts/tests/fixtures/incomplete-seven.pbxproj    |  7 +++
+ .../tests/fixtures/unparseable-occurrence.pbxproj  |  9 ++++
+ 7 files changed, 132 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/TheHuntedDiary.xcodeproj/project.pbxproj b/TheHuntedDiary.xcodeproj/project.pbxproj
+index 56c45bc..3ed709f 100644
+--- a/TheHuntedDiary.xcodeproj/project.pbxproj
++++ b/TheHuntedDiary.xcodeproj/project.pbxproj
+@@ -314,21 +314,21 @@
+ 				GCC_PREPROCESSOR_DEFINITIONS = (
+ 					"DEBUG=1",
+ 					"$(inherited)",
+ 				);
+ 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+ 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+ 				GCC_WARN_UNDECLARED_SELECTOR = YES;
+ 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+ 				GCC_WARN_UNUSED_FUNCTION = YES;
+ 				GCC_WARN_UNUSED_VARIABLE = YES;
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+ 				MTL_FAST_MATH = YES;
+ 				ONLY_ACTIVE_ARCH = YES;
+ 				SDKROOT = iphoneos;
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+ 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+ 			};
+ 			name = Debug;
+ 		};
+@@ -371,21 +371,21 @@
+ 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+ 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+ 				GCC_C_LANGUAGE_STANDARD = gnu17;
+ 				GCC_NO_COMMON_BLOCKS = YES;
+ 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+ 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+ 				GCC_WARN_UNDECLARED_SELECTOR = YES;
+ 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+ 				GCC_WARN_UNUSED_FUNCTION = YES;
+ 				GCC_WARN_UNUSED_VARIABLE = YES;
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MTL_ENABLE_DEBUG_INFO = NO;
+ 				MTL_FAST_MATH = YES;
+ 				SDKROOT = iphoneos;
+ 				SWIFT_COMPILATION_MODE = wholemodule;
+ 				VALIDATE_PRODUCT = YES;
+ 			};
+ 			name = Release;
+ 		};
+ 		328610052FFD8D73004F937E /* Debug */ = {
+@@ -394,21 +394,21 @@
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+ 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+ 				CODE_SIGN_STYLE = Automatic;
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				ENABLE_PREVIEWS = YES;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+ 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+ 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+ 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				LD_RUNPATH_SEARCH_PATHS = (
+ 					"$(inherited)",
+ 					"@executable_path/Frameworks",
+ 				);
+ 				MARKETING_VERSION = 1.0;
+ 				PRODUCT_BUNDLE_IDENTIFIER = com.TheHuntedDiary.TheHuntedDiary;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+ 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+ 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+@@ -425,21 +425,21 @@
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+ 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+ 				CODE_SIGN_STYLE = Automatic;
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				ENABLE_PREVIEWS = YES;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+ 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+ 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+ 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				LD_RUNPATH_SEARCH_PATHS = (
+ 					"$(inherited)",
+ 					"@executable_path/Frameworks",
+ 				);
+ 				MARKETING_VERSION = 1.0;
+ 				PRODUCT_BUNDLE_IDENTIFIER = com.TheHuntedDiary.TheHuntedDiary;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+ 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+ 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+@@ -450,82 +450,82 @@
+ 			};
+ 			name = Release;
+ 		};
+ 		328610082FFD8D73004F937E /* Debug */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				BUNDLE_LOADER = "$(TEST_HOST)";
+ 				CODE_SIGN_STYLE = Automatic;
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				MARKETING_VERSION = 1.0;
+ 				PRODUCT_BUNDLE_IDENTIFIER = com.TheHuntedDiary.TheHuntedDiaryTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+ 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+ 				SWIFT_EMIT_LOC_STRINGS = NO;
+ 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = 2;
+ 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TheHuntedDiary.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TheHuntedDiary";
+ 			};
+ 			name = Debug;
+ 		};
+ 		328610092FFD8D73004F937E /* Release */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				BUNDLE_LOADER = "$(TEST_HOST)";
+ 				CODE_SIGN_STYLE = Automatic;
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				MARKETING_VERSION = 1.0;
+ 				PRODUCT_BUNDLE_IDENTIFIER = com.TheHuntedDiary.TheHuntedDiaryTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+ 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+ 				SWIFT_EMIT_LOC_STRINGS = NO;
+ 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = 2;
+ 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TheHuntedDiary.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TheHuntedDiary";
+ 			};
+ 			name = Release;
+ 		};
+ 		3286100B2FFD8D73004F937E /* Debug */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				CODE_SIGN_STYLE = Automatic;
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				MARKETING_VERSION = 1.0;
+ 				PRODUCT_BUNDLE_IDENTIFIER = com.TheHuntedDiary.TheHuntedDiaryUITests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+ 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+ 				SWIFT_EMIT_LOC_STRINGS = NO;
+ 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = 2;
+ 				TEST_TARGET_NAME = TheHuntedDiary;
+ 			};
+ 			name = Debug;
+ 		};
+ 		3286100C2FFD8D73004F937E /* Release */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				CODE_SIGN_STYLE = Automatic;
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+ 				MARKETING_VERSION = 1.0;
+ 				PRODUCT_BUNDLE_IDENTIFIER = com.TheHuntedDiary.TheHuntedDiaryUITests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+ 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+ 				SWIFT_EMIT_LOC_STRINGS = NO;
+ 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = 2;
+ 				TEST_TARGET_NAME = TheHuntedDiary;
+diff --git a/scripts/assert-ios-26-deployment-targets.sh b/scripts/assert-ios-26-deployment-targets.sh
+new file mode 100755
+index 0000000..eed808a
+--- /dev/null
++++ b/scripts/assert-ios-26-deployment-targets.sh
+@@ -0,0 +1,54 @@
++#!/bin/sh
++
++set -eu
++
++script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
++project_file=${1:-"$script_dir/../TheHuntedDiary.xcodeproj/project.pbxproj"}
++
++awk '
++    BEGIN {
++        expected_count = 8
++        key_pattern = "^[[:space:]]*(IPHONEOS_DEPLOYMENT_TARGET(\\[[^]]+\\])?|\"IPHONEOS_DEPLOYMENT_TARGET(\\[[^]]+\\])?\")[[:space:]]*="
++    }
++
++    /IPHONEOS_DEPLOYMENT_TARGET/ {
++        line = $0
++        occurrences_on_line = gsub(/IPHONEOS_DEPLOYMENT_TARGET/, "&", line)
++        occurrence_count += occurrences_on_line
++
++        if (occurrences_on_line != 1 || line !~ key_pattern) {
++            printf "error: %s:%d: could not parse IPHONEOS_DEPLOYMENT_TARGET occurrence: %s\n", FILENAME, FNR, $0 > "/dev/stderr"
++            failed = 1
++            next
++        }
++
++        sub(key_pattern, "", line)
++        if (line !~ /^[[:space:]]*[^;]+;[[:space:]]*$/) {
++            printf "error: %s:%d: could not parse IPHONEOS_DEPLOYMENT_TARGET occurrence: %s\n", FILENAME, FNR, $0 > "/dev/stderr"
++            failed = 1
++            next
++        }
++
++        sub(/;[[:space:]]*$/, "", line)
++        sub(/^[[:space:]]*/, "", line)
++        sub(/[[:space:]]*$/, "", line)
++
++        if (line != "26.0") {
++            printf "error: %s:%d: found unexpected value %s for IPHONEOS_DEPLOYMENT_TARGET\n", FILENAME, FNR, line > "/dev/stderr"
++            failed = 1
++        }
++    }
++
++    END {
++        if (occurrence_count != expected_count) {
++            printf "error: expected exactly %d IPHONEOS_DEPLOYMENT_TARGET assignments; found %d in %s\n", expected_count, occurrence_count, FILENAME > "/dev/stderr"
++            failed = 1
++        }
++
++        if (failed) {
++            exit 1
++        }
++
++        printf "Verified %d IPHONEOS_DEPLOYMENT_TARGET settings at 26.0.\n", occurrence_count
++    }
++' "$project_file"
+diff --git a/scripts/tests/assert-ios-26-deployment-targets-tests.sh b/scripts/tests/assert-ios-26-deployment-targets-tests.sh
+new file mode 100755
+index 0000000..c17f76c
+--- /dev/null
++++ b/scripts/tests/assert-ios-26-deployment-targets-tests.sh
+@@ -0,0 +1,37 @@
++#!/bin/sh
++
++set -eu
++
++tests_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
++assertion="$tests_dir/../assert-ios-26-deployment-targets.sh"
++fixtures="$tests_dir/fixtures"
++output=$(mktemp)
++trap 'rm -f "$output"' EXIT
++
++if ! "$assertion" "$fixtures/exactly-eight.pbxproj" >"$output" 2>&1; then
++    cat "$output" >&2
++    echo "error: exactly eight iOS 26 assignments should pass" >&2
++    exit 1
++fi
++grep -F "Verified 8 IPHONEOS_DEPLOYMENT_TARGET settings at 26.0." "$output" >/dev/null
++
++if "$assertion" "$fixtures/conditional-obsolete-override.pbxproj" >"$output" 2>&1; then
++    echo "error: quoted conditional obsolete override unexpectedly passed" >&2
++    exit 1
++fi
++grep -F 'found unexpected value 18.0' "$output" >/dev/null
++grep -F 'expected exactly 8 IPHONEOS_DEPLOYMENT_TARGET assignments; found 9' "$output" >/dev/null
++
++if "$assertion" "$fixtures/incomplete-seven.pbxproj" >"$output" 2>&1; then
++    echo "error: incomplete seven-assignment fixture unexpectedly passed" >&2
++    exit 1
++fi
++grep -F 'expected exactly 8 IPHONEOS_DEPLOYMENT_TARGET assignments; found 7' "$output" >/dev/null
++
++if "$assertion" "$fixtures/unparseable-occurrence.pbxproj" >"$output" 2>&1; then
++    echo "error: unparseable deployment-setting occurrence unexpectedly passed" >&2
++    exit 1
++fi
++grep -F 'could not parse IPHONEOS_DEPLOYMENT_TARGET occurrence' "$output" >/dev/null
++
++echo "Verified deployment assertion accepts exact coverage and rejects conditional, incomplete, and unparseable settings."
+diff --git a/scripts/tests/fixtures/conditional-obsolete-override.pbxproj b/scripts/tests/fixtures/conditional-obsolete-override.pbxproj
+new file mode 100644
+index 0000000..1619153
+--- /dev/null
++++ b/scripts/tests/fixtures/conditional-obsolete-override.pbxproj
+@@ -0,0 +1,9 @@
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				"IPHONEOS_DEPLOYMENT_TARGET[sdk=iphoneos*]" = 18.0;
+diff --git a/scripts/tests/fixtures/exactly-eight.pbxproj b/scripts/tests/fixtures/exactly-eight.pbxproj
+new file mode 100644
+index 0000000..1d20347
+--- /dev/null
++++ b/scripts/tests/fixtures/exactly-eight.pbxproj
+@@ -0,0 +1,8 @@
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+diff --git a/scripts/tests/fixtures/incomplete-seven.pbxproj b/scripts/tests/fixtures/incomplete-seven.pbxproj
+new file mode 100644
+index 0000000..3ea5f71
+--- /dev/null
++++ b/scripts/tests/fixtures/incomplete-seven.pbxproj
+@@ -0,0 +1,7 @@
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+diff --git a/scripts/tests/fixtures/unparseable-occurrence.pbxproj b/scripts/tests/fixtures/unparseable-occurrence.pbxproj
+new file mode 100644
+index 0000000..22dd89a
+--- /dev/null
++++ b/scripts/tests/fixtures/unparseable-occurrence.pbxproj
+@@ -0,0 +1,9 @@
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
++				IPHONEOS_DEPLOYMENT_TARGET;

@@ -30,7 +30,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		6A0000010000000000000001 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		6A0000010000000000000001 /* Exceptions for "TheHuntedDiary" folder in "TheHuntedDiary" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -43,7 +43,7 @@
 		32860FE32FFD8D72004F937E /* TheHuntedDiary */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				6A0000010000000000000001 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+				6A0000010000000000000001 /* Exceptions for "TheHuntedDiary" folder in "TheHuntedDiary" target */,
 			);
 			path = TheHuntedDiary;
 			sourceTree = "<group>";

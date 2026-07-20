@@ -14,7 +14,10 @@ struct AppRootView: View {
 
     var body: some View {
         NavigationStack {
-            DiaryView()
+            DiaryView {
+                isShowingSettings = true
+            }
+                .environmentObject(dependencies)
                 .navigationTitle("Diary")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {

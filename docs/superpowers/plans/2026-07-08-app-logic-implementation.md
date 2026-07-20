@@ -160,15 +160,15 @@ Each task is also a stage. Agentic workers must update the stage metadata as the
 | Stage | Task | Completed | Must complete first |
 | --- | --- | --- | --- |
 | 1 | Project Settings and App Shell | true | None |
-| 2 | Plain Text History | false | Task 1 |
-| 3 | Prompt Builder | false | Task 2 |
-| 4 | API Key Storage and Settings | false | Task 1, Task 2 |
-| 5 | OpenAI Responses Client | false | Task 3, Task 4 |
-| 6 | Pencil Canvas | false | Task 1 |
-| 7 | Recognition Pipeline | false | Task 5, Task 6 |
-| 8 | Diary Turn Controller | false | Task 2, Task 3, Task 5, Task 6, Task 7 |
-| 9 | Reply Rendering and Fonts | false | Task 1, Task 4 |
-| 10 | Error and Recovery UX | false | Task 4, Task 8 |
+| 2 | Plain Text History | true | Task 1 |
+| 3 | Prompt Builder | true | Task 2 |
+| 4 | API Key Storage and Settings | true | Task 1, Task 2 |
+| 5 | OpenAI Responses Client | true | Task 3, Task 4 |
+| 6 | Pencil Canvas | true | Task 1 |
+| 7 | Recognition Pipeline | true | Task 5, Task 6 |
+| 8 | Diary Turn Controller | true | Task 2, Task 3, Task 5, Task 6, Task 7 |
+| 9 | Reply Rendering and Fonts | true | Task 1, Task 4 |
+| 10 | Error and Recovery UX | true | Task 4, Task 8 |
 
 ## Task 1: Project Settings and App Shell
 
@@ -217,7 +217,7 @@ xcodebuild \
 ## Task 2: Plain Text History
 
 **Stage:** 2
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 1 completed: true
 
 **Files:**
@@ -240,10 +240,10 @@ xcodebuild \
 - `PlainTextHistoryStoreTests.testRoundTripPreservesBodyMarkersAndFrontMatterDelimiters`
 - `PlainTextHistoryStoreTests.testRoundTripPersistsRecognitionModelAndOpenAIStoreFlag`
 
-- [ ] Store each conversation turn as one Markdown file under Application Support.
-- [ ] Use one file per turn so user deletion and automatic deletion are simple.
-- [ ] Update `ConversationTurn` to include `id: String`, `createdAt: Date`, `recognitionSource: RecognitionResult.Source`, `model: String`, `openAIStoreEnabled: Bool`, `userText: String`, and `assistantText: String`.
-- [ ] Use a stable file format:
+- [x] Store each conversation turn as one Markdown file under Application Support.
+- [x] Use one file per turn so user deletion and automatic deletion are simple.
+- [x] Update `ConversationTurn` to include `id: String`, `createdAt: Date`, `recognitionSource: RecognitionResult.Source`, `model: String`, `openAIStoreEnabled: Bool`, `userText: String`, and `assistantText: String`.
+- [x] Use a stable file format:
 
 ```markdown
 ---
@@ -261,14 +261,14 @@ Assistant:
 I remember enough to know you are curious.
 ```
 
-- [ ] Add tests for append, load recent, delete one, delete all, and prune oldest turns.
-- [ ] Add tests for body text containing `---`, `User:`, and `Assistant:` so front matter and body parsing stay stable.
-- [ ] Do not store drawings or image data in history.
+- [x] Add tests for append, load recent, delete one, delete all, and prune oldest turns.
+- [x] Add tests for body text containing `---`, `User:`, and `Assistant:` so front matter and body parsing stay stable.
+- [x] Do not store drawings or image data in history.
 
 ## Task 3: Prompt Builder
 
 **Stage:** 3
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 2 completed: true
 
 **Files:**
@@ -287,16 +287,16 @@ I remember enough to know you are curious.
 - `DiaryPromptBuilderTests.testPromptIsEnglishOnlyForMVP`
 - `DiaryPromptBuilderTests.testPromptDoesNotContainImageData`
 
-- [ ] Use the initial reply-generation `instructions` from `OpenAI Request Rules`, including the Tom Riddle spirit role and the guardrails against quoting source text or implying official affiliation.
-- [ ] Include recent turns oldest-first.
-- [ ] Include the current recognized text as the current user message.
-- [ ] Keep prompt language English-only for MVP.
-- [ ] Add tests that verify persona inclusion, recent-turn ordering, current user text, and absence of image data.
+- [x] Use the initial reply-generation `instructions` from `OpenAI Request Rules`, including the Tom Riddle spirit role and the guardrails against quoting source text or implying official affiliation.
+- [x] Include recent turns oldest-first.
+- [x] Include the current recognized text as the current user message.
+- [x] Keep prompt language English-only for MVP.
+- [x] Add tests that verify persona inclusion, recent-turn ordering, current user text, and absence of image data.
 
 ## Task 4: API Key Storage and Settings
 
 **Stage:** 4
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 1 completed: true; Task 2 completed: true
 
 **Files:**
@@ -316,18 +316,18 @@ I remember enough to know you are curious.
 - `AppSettingsTests.testDefaultsUseOpenAIStoreOff`
 - `AppSettingsTests.testCanToggleOpenAIStoreOnAndOff`
 
-- [ ] Store API keys in Keychain, not `UserDefaults`.
-- [ ] Add settings fields for API key and model.
-- [ ] Add a Settings toggle for OpenAI response storage, labeled plainly, defaulting to off. Suggested label: `Allow OpenAI response storage`.
-- [ ] Add helper copy under the toggle: `Off sends store: false. On sends store: true so you can compare quality, token use, and behavior during testing.`
-- [ ] Add clear-history action.
-- [ ] Add short privacy copy that handwriting/text is sent to OpenAI for transcription fallback and reply generation, the OpenAI storage toggle controls `store`, and local plain-text history is stored on device.
-- [ ] Keep font picker minimal or hidden until font files are added.
+- [x] Store API keys in Keychain, not `UserDefaults`.
+- [x] Add settings fields for API key and model.
+- [x] Add a Settings toggle for OpenAI response storage, labeled plainly, defaulting to off. Suggested label: `Allow OpenAI response storage`.
+- [x] Add helper copy under the toggle: `Off sends store: false. On sends store: true so you can compare quality, token use, and behavior during testing.`
+- [x] Add clear-history action.
+- [x] Add short privacy copy that handwriting/text is sent to OpenAI for transcription fallback and reply generation, the OpenAI storage toggle controls `store`, and local plain-text history is stored on device.
+- [x] Keep font picker minimal or hidden until font files are added.
 
 ## Task 5: OpenAI Responses Client
 
 **Stage:** 5
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 3 completed: true; Task 4 completed: true
 
 **Files:**
@@ -353,22 +353,22 @@ I remember enough to know you are curious.
 - `OpenAIStreamParserTests.testParsesErrorEvent`
 - `OpenAIStreamParserTests.testIgnoresUnknownEvents`
 
-- [ ] Use `URLSession`.
-- [ ] Call `POST https://api.openai.com/v1/responses`.
-- [ ] Model requests with enough structure for both text reply generation and image fallback transcription. Do not keep `OpenAIResponsesRequest` as only `{ model, input: String }`.
-- [ ] Add request fields for `instructions`, typed message input, optional image data URL content, `stream`, `store`, and `text.verbosity`.
-- [ ] Set `store` from the Settings toggle on every request.
-- [ ] Add tests proving both `store: false` and `store: true` encode correctly.
-- [ ] Keep OpenAI-hosted tools disabled for MVP.
-- [ ] Support `stream: true` for reply generation.
-- [ ] Parse `response.output_text.delta`, `response.output_text.done`, `response.completed`, and `error` events.
-- [ ] Keep model configurable through settings.
-- [ ] Add parser tests for text delta, completion, and error events.
+- [x] Use `URLSession`.
+- [x] Call `POST https://api.openai.com/v1/responses`.
+- [x] Model requests with enough structure for both text reply generation and image fallback transcription. Do not keep `OpenAIResponsesRequest` as only `{ model, input: String }`.
+- [x] Add request fields for `instructions`, typed message input, optional image data URL content, `stream`, `store`, and `text.verbosity`.
+- [x] Set `store` from the Settings toggle on every request.
+- [x] Add tests proving both `store: false` and `store: true` encode correctly.
+- [x] Keep OpenAI-hosted tools disabled for MVP.
+- [x] Support `stream: true` for reply generation.
+- [x] Parse `response.output_text.delta`, `response.output_text.done`, `response.completed`, and `error` events.
+- [x] Keep model configurable through settings.
+- [x] Add parser tests for text delta, completion, and error events.
 
 ## Task 6: Pencil Canvas
 
 **Stage:** 6
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 1 completed: true
 
 **Files:**
@@ -386,16 +386,16 @@ I remember enough to know you are curious.
 - `PencilCanvasExportTests.testClearRemovesDrawingBeforeNextExport`
 - `PencilCanvasExportTests.testIdleCommitFiresAfterConfiguredDelayUsingTestClock`
 
-- [ ] Wrap `PKCanvasView` in SwiftUI.
-- [ ] Capture drawing changes.
-- [ ] Add an idle commit timer, roughly 2.5 seconds after the last drawing change.
-- [ ] Export the current drawing area as an image for recognition fallback.
-- [ ] Keep the canvas visible while recognition is running so the user does not lose work on failure.
+- [x] Wrap `PKCanvasView` in SwiftUI.
+- [x] Capture drawing changes.
+- [x] Add an idle commit timer, roughly 2.5 seconds after the last drawing change.
+- [x] Export the current drawing area as an image for recognition fallback.
+- [x] Keep the canvas visible while recognition is running so the user does not lose work on failure.
 
 ## Task 7: Recognition Pipeline
 
 **Stage:** 7
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 5 completed: true; Task 6 completed: true
 
 **Files:**
@@ -418,21 +418,21 @@ I remember enough to know you are curious.
 - `RecognitionFallbackTests.testUnavailableConfidenceWithNonEmptyTextSkipsFallback`
 - `RecognitionFallbackTests.testOpenAIResultTracksOpenAISource`
 
-- [ ] Implement Apple Vision recognition first.
-- [ ] Fallback to OpenAI image transcription when Apple Vision returns empty or weak text according to `Recognition Threshold Rules`.
-- [ ] Use this OpenAI fallback instruction:
+- [x] Implement Apple Vision recognition first.
+- [x] Fallback to OpenAI image transcription when Apple Vision returns empty or weak text according to `Recognition Threshold Rules`.
+- [x] Use this OpenAI fallback instruction:
 
 ```text
 Transcribe the handwritten English text in this image. Return only the user's words. If illegible, return your best attempt.
 ```
 
-- [ ] Track recognition source as `appleVision` or `openAI`.
-- [ ] Add tests with mock recognizers to verify fallback behavior for empty text, low confidence below `0.55`, usable confidence at or above `0.55`, and unavailable confidence with non-empty text.
+- [x] Track recognition source as `appleVision` or `openAI`.
+- [x] Add tests with mock recognizers to verify fallback behavior for empty text, low confidence below `0.55`, usable confidence at or above `0.55`, and unavailable confidence with non-empty text.
 
 ## Task 8: Diary Turn Controller
 
 **Stage:** 8
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 2 completed: true; Task 3 completed: true; Task 5 completed: true; Task 6 completed: true; Task 7 completed: true
 
 **Files:**
@@ -454,17 +454,17 @@ Transcribe the handwritten English text in this image. Return only the user's wo
 - `DiaryTurnControllerTests.testHistoryWriteFailureIsVisibleButDoesNotDiscardReply`
 - `DiaryTurnControllerTests.testRetryUsesExistingDrawingOrRecognizedTextDependingOnFailureStage`
 
-- [ ] Model the flow as a small explicit state machine.
-- [ ] On idle commit, export image and run recognition.
-- [ ] Build prompt from recognized text and recent history.
-- [ ] Stream reply text into UI state.
-- [ ] Append completed turn to history.
-- [ ] On failure, keep the drawing and expose retry.
+- [x] Model the flow as a small explicit state machine.
+- [x] On idle commit, export image and run recognition.
+- [x] Build prompt from recognized text and recent history.
+- [x] Stream reply text into UI state.
+- [x] Append completed turn to history.
+- [x] On failure, keep the drawing and expose retry.
 
 ## Task 9: Reply Rendering and Fonts
 
 **Stage:** 9
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 1 completed: true; Task 4 completed: true
 
 **Files:**
@@ -483,17 +483,17 @@ Transcribe the handwritten English text in this image. Return only the user's wo
 - `AppSettingsTests.testOnlyBundledFontIsExposedForMVP`
 - Manual UI check: `ReplyTextView` renders non-empty reply text with the bundled font and no text clipping on iPad simulator.
 
-- [ ] Add exactly one OFL font for MVP: Caveat Regular.
-- [ ] Commit `Caveat-OFL.txt` beside `Caveat-Regular.ttf`.
-- [ ] Register fonts in the app bundle as needed.
-- [ ] Render reply text with a handwriting-style font.
-- [ ] Animate reveal by character, word, or line.
-- [ ] Keep font selection data-driven but expose only the single bundled font in MVP. Additional fonts can be added later by extending the font list and committing each license.
+- [x] Add exactly one OFL font for MVP: Caveat Regular.
+- [x] Commit `Caveat-OFL.txt` beside `Caveat-Regular.ttf`.
+- [x] Register fonts in the app bundle as needed.
+- [x] Render reply text with a handwriting-style font.
+- [x] Animate reveal by character, word, or line.
+- [x] Keep font selection data-driven but expose only the single bundled font in MVP. Additional fonts can be added later by extending the font list and committing each license.
 
 ## Task 10: Error and Recovery UX
 
 **Stage:** 10
-**Completed:** false
+**Completed:** true
 **Must complete first:** Task 4 completed: true; Task 8 completed: true
 
 **Files:**
@@ -512,11 +512,11 @@ Transcribe the handwritten English text in this image. Return only the user's wo
 - `AppErrorTests.testHistoryWriteFailureMessageIsNonBlocking`
 - `DiaryTurnControllerTests.testErrorRecoveryRoutesMatchAppErrorCases`
 
-- [ ] Missing API key opens settings.
-- [ ] Recognition failure preserves drawing and offers retry.
-- [ ] OpenAI failure preserves recognized text and offers retry.
-- [ ] History write failure is non-blocking and visible.
-- [ ] Keep errors concise and non-technical.
+- [x] Missing API key opens settings.
+- [x] Recognition failure preserves drawing and offers retry.
+- [x] OpenAI failure preserves recognized text and offers retry.
+- [x] History write failure is non-blocking and visible.
+- [x] Keep errors concise and non-technical.
 
 ## Verification
 
